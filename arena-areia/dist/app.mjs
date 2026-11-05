@@ -523,6 +523,8 @@ function matchCard(g, x, y, w) {
   );
 }
 /* Escala: em tela cheia a chave inteira cabe na tela; fora dela ajusta à largura. */
+const MIN_Z = 0.3,
+  MAX_Z = 2;
 let zoom = null,
   lastScale = 1;
 function graph() {
@@ -588,7 +590,7 @@ function graph() {
   // Tela estreita (celular em pé): caber tudo deixaria ilegível; ajusta pela altura.
   if (full && auto < 0.45) auto = Math.max(0.45, Math.min(availH / height, 1));
   if (!full) auto = Math.max(auto, availW < 640 ? 0.9 : 0.72);
-  const s = Math.max(0.3, Math.min(1.6, zoom ?? auto));
+  const s = Math.max(MIN_Z, Math.min(MAX_Z, zoom ?? auto));
   lastScale = s;
   container.classList.toggle("fits", s * width <= availW + 1);
   container.innerHTML =
@@ -944,7 +946,7 @@ function renderSection() {
           icon("expand") +
           "Sair da tela cheia</button>"
         : "") +
-      '</div><div class="canvas" tabindex="0" aria-label="Diagrama de confrontos. Arraste para navegar."></div><div class="board-bottom"><span class="board-note">18 duplas · 34 jogos<span class="drag-hint"> · arraste para navegar</span><span class="rotate-hint">Gire o celular para ver mais</span></span><span class="zoom" role="group" aria-label="Zoom da chave"><button data-act="zoomOut" aria-label="Diminuir zoom">−</button><button class="zoom-val" data-act="zoomFit" title="Ajustar à tela" aria-label="Ajustar à tela">100%</button><button data-act="zoomIn" aria-label="Aumentar zoom">+</button>' +
+      '</div><div class="canvas" tabindex="0" aria-label="Diagrama de confrontos. Arraste para navegar e use dois dedos para dar zoom."></div><div class="board-bottom"><span class="board-note">18 duplas · 34 jogos<span class="drag-hint"> · arraste para navegar</span><span class="rotate-hint">Use dois dedos para dar zoom</span></span><span class="zoom" role="group" aria-label="Zoom da chave"><button data-act="zoomOut" aria-label="Diminuir zoom">−</button><button class="zoom-val" data-act="zoomFit" title="Ajustar à tela" aria-label="Ajustar à tela">100%</button><button data-act="zoomIn" aria-label="Aumentar zoom">+</button>' +
       (full
         ? ""
         : '<button data-act="expand" class="zoom-full" aria-label="Tela cheia" title="Tela cheia">' +
@@ -1730,8 +1732,8 @@ document.addEventListener("click", async (ev) => {
       const c = $(".canvas"),
         prev = lastScale,
         next = Math.max(
-          0.3,
-          Math.min(1.6, +(prev * (a === "zoomIn" ? 1.2 : 1 / 1.2)).toFixed(3)),
+          MIN_Z,
+          Math.min(MAX_Z, +(prev * (a === "zoomIn" ? 1.2 : 1 / 1.2)).toFixed(3)),
         ),
         cx = (c.scrollLeft + c.clientWidth / 2) / prev,
         cy = (c.scrollTop + c.clientHeight / 2) / prev;
@@ -1818,7 +1820,7 @@ document.addEventListener("keydown", (ev) => {
     renderSection();
   }
 });
-/* Arrastar a chave com o mouse para navegar (no toque, a rolagem nativa já faz isso). */
+/* Arrastar a chave com o mouse para navegar (no toque, a rolagem nativa já faz isso; dois dedos dão zoom). */
 let pan = null;
 document.addEventListener("pointerdown", (ev) => {
   const c = ev.target.closest?.(".canvas");
@@ -1841,6 +1843,74 @@ document.addEventListener("pointermove", (ev) => {
 document.addEventListener("pointerup", () => {
   pan?.c.classList.remove("dragging");
   pan = null;
+});
+/* Pinça com dois dedos na chave (celular): escala ao vivo, mantendo o ponto entre os dedos. */
+let pinch = null;
+function applyScale(c, s) {
+  const wrap = c.querySelector(".graph-wrap"),
+    g = c.querySelector(".graph");
+  if (!wrap || !g) return;
+  const w = parseFloat(g.style.width),
+    h = parseFloat(g.style.height);
+  wrap.style.width = Math.ceil(w * s) + "px";
+  wrap.style.height = Math.ceil(h * s) + "px";
+  g.style.transform = "scale(" + s + ")";
+  c.classList.toggle("fits", s * w <= c.clientWidth + 1);
+  const val = $(".zoom-val");
+  if (val) val.textContent = Math.round(s * 100) + "%";
+}
+const fingers = (t) => ({
+  x: (t[0].clientX + t[1].clientX) / 2,
+  y: (t[0].clientY + t[1].clientY) / 2,
+  d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1,
+});
+document.addEventListener(
+  "touchstart",
+  (ev) => {
+    const c = ev.target.closest?.(".canvas");
+    if (!c || ev.touches.length !== 2) return;
+    const wrap = c.querySelector(".graph-wrap");
+    if (!wrap) return;
+    ev.preventDefault();
+    const f = fingers(ev.touches),
+      r = wrap.getBoundingClientRect();
+    pinch = {
+      c,
+      s0: lastScale,
+      d0: f.d,
+      px: (f.x - r.left) / lastScale,
+      py: (f.y - r.top) / lastScale,
+      s: lastScale,
+    };
+  },
+  { passive: false },
+);
+document.addEventListener(
+  "touchmove",
+  (ev) => {
+    if (!pinch || ev.touches.length !== 2) return;
+    ev.preventDefault();
+    const f = fingers(ev.touches),
+      s = Math.max(MIN_Z, Math.min(MAX_Z, (pinch.s0 * f.d) / pinch.d0)),
+      { c } = pinch;
+    applyScale(c, s);
+    pinch.s = s;
+    const r = c.querySelector(".graph-wrap").getBoundingClientRect();
+    c.scrollLeft += r.left + pinch.px * s - f.x;
+    c.scrollTop += r.top + pinch.py * s - f.y;
+  },
+  { passive: false },
+);
+const endPinch = (ev) => {
+  if (!pinch || ev.touches.length >= 2) return;
+  zoom = lastScale = +pinch.s.toFixed(3);
+  pinch = null;
+};
+document.addEventListener("touchend", endPinch);
+document.addEventListener("touchcancel", endPinch);
+// Safari (iPhone): não deixa a página inteira dar zoom quando a pinça é na chave.
+document.addEventListener("gesturestart", (ev) => {
+  if (ev.target.closest?.(".canvas")) ev.preventDefault();
 });
 // Se o diálogo de "nova edição" trocou o rascunho, o painel de duplas recarrega o da edição.
 dialog.addEventListener("close", () => {
