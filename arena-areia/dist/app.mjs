@@ -52,7 +52,49 @@ let editions = [],
   user = null,
   full = false,
   revision = 0;
-const requested = () => new URL(location.href).searchParams.get("edicao");
+// Link curto da edição: ?copa-da-praia (aceita também o antigo ?edicao=<id>).
+function requested() {
+  const u = new URL(location.href),
+    old = u.searchParams.get("edicao");
+  if (old) return old;
+  const first = u.search.slice(1).split("&")[0];
+  return first && !first.includes("=") ? decodeURIComponent(first).toLowerCase() : null;
+}
+const slugify = (t) =>
+  String(t || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/, "") || "edicao";
+// Nomes repetidos: a edição mais antiga fica com o nome puro, as outras ganham 4 letras do id.
+function slugOf(e) {
+  if (!e || e.id === "demo") return "demo";
+  const base = slugify(e.title),
+    same = editions.filter((x) => slugify(x.title) === base),
+    oldest = same[same.length - 1];
+  return !oldest || oldest.id === e.id ? base : base + "-" + e.id.slice(0, 4);
+}
+function findEdition(all, tok) {
+  if (!tok) return null;
+  const hit = all.find((e) => e.id === tok || slugOf(e) === tok);
+  if (hit) return hit;
+  const m = tok.match(/^(.*)-([0-9a-f]{4})$/);
+  if (m) {
+    const byId = all.find((e) => e.id.startsWith(m[2]) && slugify(e.title) === m[1]);
+    if (byId) return byId;
+  }
+  const same = all.filter((e) => slugify(e.title) === tok);
+  return same[same.length - 1] || null;
+}
+function editionUrl(e) {
+  const u = new URL(location.href);
+  u.search = "?" + slugOf(e);
+  u.hash = "";
+  return u;
+}
 const count = () => Object.keys(edition.results).length;
 const status = () =>
   edition.archived ? "Encerrado" : count() ? "Em andamento" : "A iniciar";
@@ -97,9 +139,7 @@ function setEdition(e, changeUrl = true) {
   full = false;
   filter = "all";
   if (changeUrl) {
-    const url = new URL(location.href);
-    url.searchParams.set("edicao", e.id);
-    history.pushState({}, "", url);
+    history.pushState({}, "", editionUrl(e));
   }
   render();
 }
@@ -113,11 +153,14 @@ async function refresh() {
     const picked =
       id === "demo"
         ? demo
-        : all.find((e) => e.id === id) || (!id && all[0]) || demo;
+        : findEdition(all, id) || (!id && all[0]) || demo;
     $("#net").textContent =
       id && id !== "demo" && picked === demo
         ? "Esta edição está indisponível para sua conta. Exibindo a demonstração."
         : "";
+    // Links antigos (?edicao=<id>) viram o link curto.
+    if (id && picked !== demo && id !== slugOf(picked))
+      history.replaceState({}, "", editionUrl(picked));
     if (picked.id !== edition.id) setEdition(picked, false);
     else if (
       picked.version !== edition.version ||
@@ -762,9 +805,7 @@ function teamsPanel() {
 }
 function settingsPanel() {
   const left = 34 - count(),
-    link = new URL(location.href);
-  link.searchParams.set("edicao", edition.id);
-  link.hash = "";
+    link = editionUrl(edition);
   const card = (title, body, cls = "") =>
     '<section class="admin-card ' + cls + '"><h3>' + title + "</h3>" + body + "</section>";
   return (
@@ -790,7 +831,7 @@ function settingsPanel() {
     ) +
     card(
       "Link para os atletas",
-      '<p class="help">Mande no grupo do torneio. Quem abrir pode instalar o app e ativar os avisos da própria dupla.</p><input readonly class="admin-link" value="' +
+      '<p class="help">Mande no grupo do torneio. Quem abrir pode instalar o app e ativar os avisos da própria dupla. O link usa o nome do campeonato: se trocar o nome, mande o link novo.</p><input readonly class="admin-link" value="' +
         esc(link.href) +
         '" aria-label="Link da edição">' +
         btn("share", icon("share") + "Copiar link"),
@@ -1511,9 +1552,7 @@ function coverEditor() {
   showCoverPreview(coverUrl(edition.cover));
 }
 async function share() {
-  const url = new URL(location.href);
-  url.searchParams.set("edicao", edition.id);
-  url.hash = "";
+  const url = editionUrl(edition);
   try {
     await navigator.clipboard.writeText(url.href);
     notify("Link da edição copiado");
@@ -1885,6 +1924,7 @@ document.addEventListener("submit", async (ev) => {
       }
       clearDraft();
       const u = new URL(location.href);
+      u.search = "";
       u.searchParams.set("edicao", id);
       history.pushState({}, "", u);
     }
