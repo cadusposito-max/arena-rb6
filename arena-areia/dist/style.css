@@ -2909,3 +2909,84 @@ body.lock {
     padding: 9px 3px;
   }
 }
+
+/* ==========================================================
+   Chave flexível: espelhada/linear, número variável de duplas
+   ========================================================== */
+.mirror-toggle {
+  flex: none;
+  padding: 7px 13px;
+  font-size: 13px;
+  gap: 7px;
+}
+.mirror-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+.mirror-toggle[aria-pressed="true"] {
+  background: var(--teal-50);
+  border-color: color-mix(in srgb, var(--teal) 30%, transparent);
+  color: var(--teal);
+}
+.counter > span:first-child i {
+  font-style: normal;
+}
+.slot-remove {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+.slot-head .ready + .slot-remove {
+  margin-left: 2px;
+}
+.slot-remove:hover {
+  color: #a53a20;
+  border-color: #efc9bb;
+  background: #fdece6;
+}
+.roster-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 4px;
+}
+.roster-more .btn svg {
+  width: 16px;
+  height: 16px;
+}
+.roster-more .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bracket-info {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sun-ink);
+}
+.reshuffle {
+  margin: -4px 0 4px;
+}
+.reshuffle .btn svg {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 580px) {
+  .board-top {
+    flex-wrap: wrap;
+  }
+  .mirror-toggle {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+}
+/* Com o botão de remover, o selo "Pronta" fica só com o ícone (sobra espaço para o nome). */
+.slot-head:has(.slot-remove) .ready {
+  font-size: 0;
+  gap: 0;
+  padding: 4px;
+}

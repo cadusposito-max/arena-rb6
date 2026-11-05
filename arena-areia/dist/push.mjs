@@ -23,10 +23,20 @@ export const permission = () =>
 export function myTeam(editionId) {
   try {
     const me = JSON.parse(localStorage.getItem(ME_KEY) || "null");
-    if (me && me.edition === editionId && me.slot >= 1 && me.slot <= 18)
+    if (me && me.edition === editionId && me.slot >= 1 && me.slot <= 32)
       return me;
   } catch {}
   return null;
+}
+/** Depois de um novo sorteio de vagas, acha a dupla pelo nome e corrige a vaga guardada. */
+export function syncTeam(editionId, teams) {
+  const me = myTeam(editionId);
+  if (!me || !Array.isArray(teams)) return;
+  if (me.slot > teams.length) return saveMe(null);
+  if (teams[me.slot - 1] === me.name) return;
+  const moved = me.name ? teams.indexOf(me.name) : -1;
+  if (moved >= 0) saveMe({ ...me, slot: moved + 1 });
+  else saveMe({ ...me, name: teams[me.slot - 1] }); // só trocou de nome
 }
 function saveMe(me) {
   try {
@@ -100,9 +110,9 @@ async function callFunction(method, body) {
 
 /** Segue a dupla neste aparelho. Com `withPush`, pede permissão e inscreve o celular.
  *  Chame a partir de um toque do usuário (exigência do iPhone para pedir permissão). */
-export async function follow(editionId, slot, withPush) {
+export async function follow(editionId, slot, withPush, name = "") {
   if (!withPush) {
-    saveMe({ edition: editionId, slot, push: false });
+    saveMe({ edition: editionId, slot, name, push: false });
     return { push: false };
   }
   if (!pushSupported())
@@ -115,7 +125,7 @@ export async function follow(editionId, slot, withPush) {
   const asked = Notification.requestPermission();
   const registration = navigator.serviceWorker.register("./sw.js");
   if ((await asked) !== "granted") {
-    saveMe({ edition: editionId, slot, push: false });
+    saveMe({ edition: editionId, slot, name, push: false });
     throw Error(
       "Os avisos foram bloqueados. Libere as notificações deste site nas configurações do celular.",
     );
@@ -148,7 +158,7 @@ export async function follow(editionId, slot, withPush) {
     p_p256dh: json.keys.p256dh,
     p_auth: json.keys.auth,
   });
-  saveMe({ edition: editionId, slot, push: true });
+  saveMe({ edition: editionId, slot, name, push: true });
   return { push: true };
 }
 

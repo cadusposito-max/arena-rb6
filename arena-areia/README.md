@@ -45,6 +45,10 @@ Configuração (uma vez):
 
 O site precisa estar em HTTPS (GitHub Pages já é).
 
+## Chave flexível (6 a 32 duplas)
+
+Requer a migração `202611050006_chave_flexivel.sql` (modelos de chave de 6 a 32 duplas, criação com qualquer tamanho, sorteio de vagas e avisos para até 32 vagas). Depois de rodá-la, publique de novo a função de avisos com o `index.ts` atual: ela passa a ler a chave de cada edição. O SQL é gerado por `supabase/scripts/make-migration-0006.mjs` a partir do motor do site; a pasta `supabase/` fica só no computador.
+
 ## Painel do organizador
 
 Organizadores logados veem a aba **Organizar** (e entram direto nela ao fazer login). Requer a migração `202611050005_painel_organizador.sql`.
@@ -55,16 +59,16 @@ Organizadores logados veem a aba **Organizar** (e entram direto nela ao fazer lo
 
 ## Operar
 
-1. Entre em **Área do organizador** com a conta criada no Supabase. Crie uma edição com nome, foto de capa (opcional) e as 18 duplas: os dois atletas, um apelido opcional e a cor e o símbolo de cada dupla. A ordem determina as vagas e o botão **Colar lista** preenche várias de uma vez. O rascunho fica salvo no navegador até a edição ser criada. A opção de visibilidade controla a leitura anônima no banco. A capa pode ser trocada depois pela Área do organizador.
+1. Entre em **Área do organizador** com a conta criada no Supabase. Crie uma edição com nome, foto de capa (opcional) e de 6 a 32 duplas: os dois atletas, um apelido opcional e a cor e o símbolo de cada dupla. **Adicionar dupla** e o **×** de cada card mudam a quantidade; **Colar lista** preenche várias de uma vez (uma dupla por linha). As vagas na chave são sorteadas ao criar e podem ser sorteadas de novo no painel (**Duplas → Sortear posições de novo**) até o primeiro placar. O rascunho fica salvo no navegador até a edição ser criada. A opção de visibilidade controla a leitura anônima no banco.
 2. Selecione um jogo disponível e salve o placar. A chave resolve vencedores e perdedores pelas dependências do modelo v1. Os visitantes consultam atualizações a cada 15 segundos. A lista **Campeonatos** permite trocar de edição.
 3. Corrija resultados pelo mesmo formulário. O banco rejeita edições concorrentes e alterações do vencedor quando um dependente já tem resultado. Alterações são registradas em `arena_areia.audit`. As políticas de acesso são aplicadas no servidor.
 4. O administrador pode adicionar um organizador com conta confirmada, que passa a operar as suas edições. Para revogar acesso, o administrador do banco remove o vínculo em `arena_areia.staff`.
-5. Depois de concluir 34 jogos, encerre a edição. Para reutilizar a estrutura, crie outra edição. Os dados da anterior ficam no histórico.
+5. Depois de concluir todos os jogos (duplas × 2 − 2), encerre a edição. Para reutilizar a estrutura, crie outra edição. Os dados da anterior ficam no histórico.
 
 ## Modelo e regras
 
-Modelo v1 da imagem fornecida, com cruzamentos P25 → J30 e P26 → J29. O jogo 33 decide terceiro e quarto e o 34 decide campeão e vice. A **Chave completa** mostra tudo numa tela: chave principal em cima (jogos 1 a 8 na 1ª rodada, vagas 17 e 18 entrando nos jogos 9 e 10), repescagem embaixo e semifinais/final à direita. Os filtros Principal, Repescagem e Finais isolam cada parte. Em tela cheia a chave é ajustada para caber inteira, com zoom (−/+, pinça com dois dedos no celular, toque na porcentagem para reajustar) e arrastar. O detalhe de cada partida mostra suas origens e destinos. Para futuros modelos, adicione uma versão separada do grafo no banco e um renderizador correspondente antes de habilitar criação de edições dessa versão.
+Dupla eliminação gerada por `dist/engine.mjs` para qualquer número de 6 a 32 duplas (sempre duplas × 2 − 2 jogos). Chave principal na ordem clássica de cabeças (1×8, 4×5…): quando o número de duplas não fecha uma potência de 2, as primeiras vagas entram direto na 2ª rodada. Quem perde vai para a repescagem, dividida em dois lados (os perdedores trocam de lado a cada rodada para evitar reencontros cedo). Os dois perdedores da classificatória da principal cruzam de lado e enfrentam os sobreviventes da repescagem; depois vêm as semifinais, o 3º lugar e a final (sempre os 4 últimos jogos). A **Chave completa** abre **espelhada** (os lados se encontram no meio, com a final ao centro) em telas largas e **linear** no celular em pé; o botão ao lado dos filtros troca e a escolha fica salva no aparelho. Os filtros Principal, Repescagem e Finais isolam cada parte. Em tela cheia a chave é ajustada para caber inteira, com zoom (−/+, pinça com dois dedos no celular, toque na porcentagem para reajustar) e arrastar. Edições criadas antes da chave flexível continuam no modelo v1 (18 duplas, 34 jogos). Os testes simulam milhares de campeonatos de cada tamanho.
 
-Este MVP assume 18 duplas, posicionamento manual, dois placares inteiros diferentes e encerramento após os 34 jogos. A organização deve validar regras específicas de sets, pontuação-alvo, W.O., desistências e empates antes de uso oficial. Teste restauração de backup e os e-mails no domínio de produção antes do primeiro evento.
+Este MVP assume de 6 a 32 duplas, vagas sorteadas, dois placares inteiros diferentes e encerramento depois de todos os jogos. A organização deve validar regras específicas de sets, pontuação-alvo, W.O., desistências e empates antes de uso oficial. Teste restauração de backup e os e-mails no domínio de produção antes do primeiro evento.
 
 Logo original em `brand/` (monograma RB, versões branca e escura com fundo transparente); o logo do site e os ícones do app em `dist/assets/` saem dela. Imagem ilustrativa de futevôlei gerada com IA para o projeto. Fontes Barlow Condensed e Inter sob SIL Open Font License (licenças em `dist/assets/`).

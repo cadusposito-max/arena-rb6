@@ -1,10 +1,13 @@
 import {
-  demo,
-  slots,
   matchNumber as num,
+  demo,
   resolveEdition,
   sourceLabel,
   routes,
+  graphOf,
+  shape,
+  MIN_TEAMS,
+  MAX_TEAMS,
 } from "./engine.mjs";
 import {
   icon,
@@ -22,6 +25,7 @@ import {
 import { client, rpc } from "./cloud.js";
 import {
   myTeam,
+  syncTeam,
   follow,
   unfollow,
   notifyGames,
@@ -43,9 +47,20 @@ const esc = (v) =>
         c
       ],
   );
+/* Estrutura da chave da edição aberta (G = jogos, S = partes da chave). */
+let G = graphOf(demo),
+  S = shape(G);
+function resolve(e) {
+  const g = graphOf(e);
+  if (g !== G) {
+    G = g;
+    S = shape(G);
+  }
+  return resolveEdition(e);
+}
 let editions = [],
   edition = demo,
-  games = resolveEdition(demo),
+  games = resolve(demo),
   view = "bracket",
   branch = "all",
   filter = "all",
@@ -133,7 +148,7 @@ function notify(msg) {
 }
 function setEdition(e, changeUrl = true) {
   edition = e;
-  games = resolveEdition(e);
+  games = resolve(e);
   view = "bracket";
   branch = "all";
   full = false;
@@ -167,7 +182,7 @@ async function refresh() {
       picked.can_edit !== edition.can_edit
     ) {
       edition = picked;
-      games = resolveEdition(picked);
+      games = resolve(picked);
       render();
     }
   } catch {
@@ -178,6 +193,7 @@ async function refresh() {
 }
 function render() {
   useProfiles(edition.profiles);
+  syncTeam(edition.id, edition.teams);
   mySlot = myTeam(edition.id)?.slot ?? null;
   renderFollow();
   const cover = coverUrl(edition.cover);
@@ -198,10 +214,10 @@ function render() {
         ? "Edição pública"
         : "Edição privada";
   const metrics = [
-    ["teams", "18", "Duplas inscritas"],
-    ["bracket", "34", "Jogos na chave"],
+    ["teams", String(edition.teams.length), "Duplas inscritas"],
+    ["bracket", String(S.total), "Jogos na chave"],
     ["check", String(count()).padStart(2, "0"), "Jogos concluídos"],
-    ["flag", Math.round((count() / 34) * 100) + "%", "Progresso da edição"],
+    ["flag", Math.round((count() / S.total) * 100) + "%", "Progresso da edição"],
   ];
   $("#metrics").innerHTML = metrics
     .map(
@@ -255,10 +271,10 @@ function nextFor(slot) {
     );
   }
   const place = [
-    games[34].winner,
-    games[34].loser,
-    games[33].winner,
-    games[33].loser,
+    games[S.final].winner,
+    games[S.final].loser,
+    games[S.third].winner,
+    games[S.third].loser,
   ].indexOf(slot);
   if (place >= 0) return "Campanha encerrada · <b>" + (place + 1) + "º lugar</b>";
   return "Campanha encerrada nesta edição";
@@ -366,7 +382,7 @@ async function startFollow(slot, withPushRequested = true) {
     !(isIOS && !isStandalone());
   const name = edition.teams[slot - 1];
   try {
-    const r = await follow(edition.id, slot, withPush);
+    const r = await follow(edition.id, slot, withPush, name);
     if (dialog.open) dialog.close();
     render();
     notify(
@@ -392,87 +408,185 @@ const branchNames = {
   lower: "Repescagem",
   final: "Finais",
 };
-/* Layout da chave: cada jogo tem coluna e posição vertical (px do topo do card).
-   Os cards têm 80px de altura e os fios ligam o centro deles. */
-const ROW = 90;
-function layout(kind) {
-  const cards = [],
+/* Chave espelhada (os lados se encontram no meio) ou linear (da esquerda para a direita). */
+const MIRROR_KEY = "arena-areia:chave-espelhada";
+// Padrão: espelhada em telas largas, linear no celular em pé (a escolha da pessoa fica salva).
+let mirror = (() => {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(MIRROR_KEY);
+  } catch {}
+  return saved === null ? matchMedia("(min-width: 700px)").matches : saved !== "0";
+})();
+/* Layout da chave, gerado da estrutura de cada edição (qualquer número de duplas).
+   Cada jogo vira um card de 80px de altura; os fios ligam o centro dos cards. */
+const ROW = 90,
+  CARD_H = 80,
+  GAP = 40,
+  PAD = 22;
+/** Árvore de uma parte da chave: y de cada jogo (média dos jogos que o alimentam) e distância até a raiz. */
+function tree(roots, set, top) {
+  const pos = new Map();
+  let leaf = 0;
+  const visit = (n, dist) => {
+    const kids = S.kids(n).filter((k) => set.has(k));
+    kids.forEach((k) => visit(k, dist + 1));
+    const y = kids.length
+      ? kids.reduce((sum, k) => sum + pos.get(k).y, 0) / kids.length
+      : top + leaf++ * ROW;
+    pos.set(n, { dist, y });
+  };
+  roots.forEach((r) => r && visit(r, 0));
+  let depth = 0,
+    bottom = top - ROW + CARD_H;
+  for (const p of pos.values()) {
+    depth = Math.max(depth, p.dist);
+    bottom = Math.max(bottom, p.y + CARD_H);
+  }
+  return { pos, depth, bottom };
+}
+/** Nome da rodada de um jogo da principal ou da repescagem. */
+function roundName(dist, depth) {
+  return dist === 0 ? "Classificatória" : depth - dist + 1 + "ª rodada";
+}
+let rounds = new Map(),
+  roundsFor = null;
+/** Nome da rodada de cada jogo (recalcula quando a estrutura da chave muda). */
+function roundOf(n) {
+  if (roundsFor !== G) computeRounds();
+  return rounds.get(n) || "";
+}
+function computeRounds() {
+  roundsFor = G;
+  rounds = new Map();
+  for (const [roots, set] of [
+    [S.mainRoots, S.main],
+    [S.lowerRoots, S.lower],
+  ]) {
+    const t = tree(roots, set, 0);
+    for (const [n, p] of t.pos) rounds.set(n, roundName(p.dist, t.depth));
+  }
+}
+/** y de cada cruzamento: na altura do sobrevivente da repescagem, ou numa linha livre abaixo. */
+function crossYs(t, top) {
+  let free = t.pos.size ? t.bottom - CARD_H + ROW : top;
+  const ys = S.lowerRoots.map((root) => (root ? t.pos.get(root).y : null));
+  return ys.map((y) => (y == null ? (free += ROW) - ROW : y));
+}
+function layout(kind, w) {
+  const step = w + GAP,
+    cards = [],
     titles = [],
     tags = [],
-    seps = [];
-  const at = (top) => (r) => top + r * ROW;
-  const put = (col, y, ...pairs) =>
-    pairs.forEach(([n, r]) => cards.push([n, col, y(r)]));
-  if (kind === "all") {
-    const up = at(68),
-      low = at(866);
-    tags.push([0, 6, "Chave principal"], [0, 800, "Repescagem"]);
-    seps.push([0, 4, 786]);
-    put(0, up, [1, 0], [3, 1], [4, 2], [5, 3], [6, 4], [7, 5], [8, 6], [2, 7]);
-    put(1, up, [9, 0], [10, 7]);
-    put(2, up, [13, 0.5], [14, 2.5], [15, 4.5], [16, 6.5]);
-    put(3, up, [25, 1.5], [26, 5.5]);
-    put(0, low, [12, 0], [11, 3]);
-    put(1, low, [17, 0], [18, 1], [19, 2], [20, 3]);
-    put(2, low, [21, 0], [22, 1], [23, 2], [24, 3]);
-    put(3, low, [27, 0.5], [28, 2.5]);
-    put(4, low, [29, 0.5], [30, 2.5]);
-    const s1 = (up(1.5) + low(0.5)) / 2,
-      s2 = (up(5.5) + low(2.5)) / 2;
-    put(5, (y) => y, [31, s1], [32, s2]);
-    put(6, (y) => y, [34, (s1 + s2) / 2], [33, low(2.5)]);
-    titles.push(
-      [0, 40, "1ª rodada"],
-      [1, 40, "Vagas 17 e 18"],
-      [2, 40, "2ª rodada"],
-      [3, 40, "Classificatórias"],
-      [0, 836, "Entrada"],
-      [1, 836, "1ª rodada"],
-      [2, 836, "2ª rodada"],
-      [3, 836, "3ª rodada"],
-      [4, 836, "Classificatórias"],
-      [5, s1 - 30, "Semifinais"],
-      [6, (s1 + s2) / 2 - 30, "Final"],
-      [6, low(2.5) - 30, "3º lugar"],
-    );
-  } else if (kind === "main") {
-    const y = at(48);
-    put(0, y, [1, 0], [3, 1], [4, 2], [5, 3], [6, 4], [7, 5], [8, 6], [2, 7]);
-    put(1, y, [9, 0], [10, 7]);
-    put(2, y, [13, 0.5], [14, 2.5], [15, 4.5], [16, 6.5]);
-    put(3, y, [25, 1.5], [26, 5.5]);
-    put(4, y, [31, 1.5], [32, 5.5]);
-    titles.push(
-      [0, 18, "1ª rodada"],
-      [1, 18, "Vagas 17 e 18"],
-      [2, 18, "2ª rodada"],
-      [3, 18, "Classificatórias"],
-      [4, 18, "Semifinais"],
-    );
-  } else if (kind === "lower") {
-    const y = at(48);
-    put(0, y, [12, 0], [11, 3]);
-    put(1, y, [17, 0], [18, 1], [19, 2], [20, 3]);
-    put(2, y, [21, 0], [22, 1], [23, 2], [24, 3]);
-    put(3, y, [27, 0.5], [28, 2.5]);
-    put(4, y, [29, 0.5], [30, 2.5]);
-    titles.push(
-      [0, 18, "Entrada"],
-      [1, 18, "1ª rodada"],
-      [2, 18, "2ª rodada"],
-      [3, 18, "3ª rodada"],
-      [4, 18, "Classificatórias"],
-    );
-  } else {
-    const y = at(48);
-    put(0, y, [31, 0], [32, 1.8]);
-    put(1, y, [34, 0.9], [33, 2.8]);
-    titles.push(
-      [0, 18, "Semifinais"],
-      [1, y(0.9) - 30, "Final"],
-      [1, y(2.8) - 30, "3º lugar"],
-    );
+    seps = [],
+    x = (col) => PAD + col * step,
+    put = (n, col, y) => cards.push([n, x(col), y]),
+    titled = new Set(),
+    title = (col, y, text) => {
+      const key = col + ":" + y;
+      if (titled.has(key)) return;
+      titled.add(key);
+      titles.push([x(col), y, text]);
+    };
+  // Coloca uma árvore: coluna = base ± distância até a raiz.
+  const place = (t, colOf, titleY) => {
+    for (const [n, p] of t.pos) {
+      put(n, colOf(p.dist), p.y);
+      if (titleY != null) title(colOf(p.dist), titleY, roundName(p.dist, t.depth));
+    }
+  };
+  const real = () => S.lowerRoots.filter(Boolean),
+    [x0, x1] = S.cross,
+    [s0, s1] = S.semis;
+  if (kind === "final") {
+    const top = 48;
+    put(s0, 0, top);
+    put(s1, 0, top + ROW * 1.8);
+    put(S.final, 1, top + ROW * 0.9);
+    put(S.third, 1, top + ROW * 2.8);
+    title(0, top - 30, "Semifinais");
+    title(1, top + ROW * 0.9 - 30, "Final");
+    title(1, top + ROW * 2.8 - 30, "3º lugar");
+    return { cards, titles, tags, seps };
   }
+  if (kind === "main") {
+    const t = tree(S.mainRoots, S.main, 48);
+    place(t, (d) => t.depth - d, 18);
+    return { cards, titles, tags, seps };
+  }
+  if (kind === "lower") {
+    const t = tree(real(), S.lower, 48);
+    place(t, (d) => t.depth - d, 18);
+    const xc = t.pos.size ? t.depth + 1 : 0,
+      ys = crossYs(t, 48);
+    S.cross.forEach((n, i) => put(n, xc, ys[i]));
+    title(xc, 18, "Cruzamento");
+    return { cards, titles, tags, seps };
+  }
+  // Chave completa
+  const mainTop = 68;
+  if (!mirror) {
+    const tm = tree(S.mainRoots, S.main, mainTop),
+      lowTop = tm.bottom + 140,
+      tl = tree(real(), S.lower, lowTop),
+      xc = Math.max(tm.depth, tl.pos.size ? tl.depth : -1) + 1;
+    place(tm, (d) => tm.depth - d, mainTop - 28);
+    place(tl, (d) => tl.depth - d, lowTop - 28);
+    const xy = crossYs(tl, lowTop);
+    put(x0, xc, xy[0]);
+    put(x1, xc, xy[1]);
+    title(xc, lowTop - 28, "Cruzamento");
+    const sy = S.semis.map((n, i) => (tm.pos.get(S.mainRoots[i]).y + xy[i]) / 2);
+    if (Math.abs(sy[1] - sy[0]) < ROW) sy[1] = sy[0] + ROW;
+    const fy = (sy[0] + sy[1]) / 2;
+    put(s0, xc + 1, sy[0]);
+    put(s1, xc + 1, sy[1]);
+    put(S.final, xc + 2, fy);
+    put(S.third, xc + 2, fy + 125);
+    title(xc + 1, Math.min(...sy) - 30, "Semifinais");
+    titles.push([x(xc + 2), fy - 30, "Final"], [x(xc + 2), fy + 95, "3º lugar"]);
+    tags.push([x(0), 6, "Chave principal"], [x(0), lowTop - 62, "Repescagem"]);
+    seps.push([PAD, x(xc + 2) + w, lowTop - 80]);
+    return { cards, titles, tags, seps };
+  }
+  // Espelhada: lado esquerdo cresce para a direita, lado direito para a esquerda.
+  const mains = S.mainRoots.map((r) => tree([r], S.main, mainTop)),
+    lowTop = Math.max(...mains.map((t) => t.bottom)) + 140,
+    lows = S.lowerRoots.map((r) => tree([r], S.lower, lowTop)),
+    dm = Math.max(...mains.map((t) => t.depth)),
+    dl = Math.max(-1, ...lows.map((t) => (t.pos.size ? t.depth : -1))),
+    W = Math.max(dm + 1, dl + 2),
+    center = W + 1; // coluna da final
+  const sides = [
+    { main: (d) => W - 1 - d, low: (d) => W - 2 - d, cross: W - 1, semi: W },
+    { main: (d) => W + 3 + d, low: (d) => W + 4 + d, cross: W + 3, semi: W + 2 },
+  ];
+  const sy = [];
+  sides.forEach((side, i) => {
+    const tm = mains[i],
+      tlow = lows[i];
+    for (const [n, p] of tm.pos) {
+      put(n, side.main(p.dist), p.y);
+      title(side.main(p.dist), mainTop - 28, roundName(p.dist, dm));
+    }
+    for (const [n, p] of tlow.pos) {
+      put(n, side.low(p.dist), p.y);
+      title(side.low(p.dist), lowTop - 28, roundName(p.dist, dl));
+    }
+    const root = S.lowerRoots[i],
+      cy = root ? tlow.pos.get(root).y : lowTop;
+    put(S.cross[i], side.cross, cy);
+    title(side.cross, lowTop - 28, "Cruzamento");
+    sy[i] = (tm.pos.get(S.mainRoots[i]).y + cy) / 2;
+    put(S.semis[i], side.semi, sy[i]);
+    titles.push([x(side.semi), sy[i] - 30, "Semifinal"]);
+  });
+  const fy = (sy[0] + sy[1]) / 2;
+  put(S.final, center, fy);
+  put(S.third, center, fy + 125);
+  titles.push([x(center), fy - 30, "Final"], [x(center), fy + 95, "3º lugar"]);
+  tags.push([x(0), 6, "Chave principal"], [x(0), lowTop - 62, "Repescagem"]);
+  seps.push([PAD, x(2 * W + 2) + w, lowTop - 80]);
   return { cards, titles, tags, seps };
 }
 function phaseState(g) {
@@ -483,10 +597,11 @@ function phaseState(g) {
       : ["gray", "A definir"];
 }
 function matchCard(g, x, y, w) {
-  const [cls, label] = phaseState(g);
+  const [cls, label] = phaseState(g),
+    isFinal = g.number === S.final;
   return (
     '<button class="match' +
-    (g.number === 34 ? " is-final" : "") +
+    (isFinal ? " is-final" : "") +
     '" data-game="' +
     g.number +
     '" style="left:' +
@@ -496,7 +611,7 @@ function matchCard(g, x, y, w) {
     "px;width:" +
     w +
     'px"><span class="match-head">' +
-    (g.number === 34 ? icon("trophy") + "FINAL" : "JOGO " + num(g.number)) +
+    (isFinal ? icon("trophy") + "FINAL" : "JOGO " + num(g.number)) +
     '<span class="state"><i class="dot ' +
     cls +
     '"></i>' +
@@ -523,56 +638,50 @@ function matchCard(g, x, y, w) {
   );
 }
 /* Escala: em tela cheia a chave inteira cabe na tela; fora dela ajusta à largura. */
-const MIN_Z = 0.3,
+const MIN_Z = 0.2,
   MAX_Z = 2;
 let zoom = null,
   lastScale = 1;
 function graph() {
   const container = $(".canvas");
   if (!container) return;
-  const { cards, titles, tags, seps } = layout(branch),
-    w = branch === "final" ? 250 : 206,
-    gap = 40,
-    step = w + gap,
-    pad = 22,
-    xOf = (col) => pad + col * step,
+  const w = branch === "final" ? 250 : 206,
+    { cards, titles, tags, seps } = layout(branch, w),
     positions = {};
-  cards.forEach(([n, col, y]) => (positions[n] = { x: xOf(col), y }));
+  cards.forEach(([n, x, y]) => (positions[n] = { x, y }));
   const lines = [];
   for (const [n, to] of Object.entries(positions))
     for (const ref of games[n].refs) {
       if (ref[0] === "S") continue;
       const from = positions[Number(ref.slice(1))];
-      if (!from || from.x >= to.x) continue;
+      if (!from || from.x === to.x) continue;
       const loser = ref[0] === "P";
       if (loser && branch === "all") continue;
-      const x = from.x + w,
-        y = from.y + 40,
-        mid = x + Math.min(gap / 2, (to.x - x) / 2) + (loser ? 6 : 0);
+      const right = from.x < to.x,
+        x1 = right ? from.x + w : from.x,
+        x2 = right ? to.x : to.x + w,
+        mid = x1 + (right ? 1 : -1) * (Math.min(GAP / 2, Math.abs(x2 - x1) / 2) + (loser ? 6 : 0));
       lines.push(
         '<path class="' +
           (loser ? "loser" : "") +
           '" d="M' +
-          x +
+          x1 +
           " " +
-          y +
+          (from.y + 40) +
           " H" +
           mid +
           " V" +
           (to.y + 40) +
           " H" +
-          to.x +
+          x2 +
           '"/>',
       );
     }
-  seps.forEach(([c0, c1, y]) =>
-    lines.push(
-      '<path class="sep" d="M' + pad + " " + y + " H" + (xOf(c1) + w) + '"/>',
-    ),
+  seps.forEach(([a, b, y]) =>
+    lines.push('<path class="sep" d="M' + a + " " + y + " H" + b + '"/>'),
   );
-  const cols = Math.max(...cards.map((c) => c[1])) + 1,
-    width = pad * 2 + (cols - 1) * step + w,
-    height = Math.max(...cards.map((c) => c[2])) + 80 + pad;
+  const width = Math.max(...cards.map((c) => c[1])) + w + PAD,
+    height = Math.max(...cards.map((c) => c[2])) + CARD_H + PAD;
   const cs = getComputedStyle(container),
     availW =
       container.clientWidth -
@@ -593,6 +702,8 @@ function graph() {
   const s = Math.max(MIN_Z, Math.min(MAX_Z, zoom ?? auto));
   lastScale = s;
   container.classList.toggle("fits", s * width <= availW + 1);
+  const label = (cls) => ([x, y, text]) =>
+    '<div class="' + cls + '" style="left:' + x + "px;top:" + y + 'px">' + text + "</div>";
   container.innerHTML =
     '<div class="graph-wrap" style="width:' +
     Math.ceil(width * s) +
@@ -607,30 +718,8 @@ function graph() {
     ')"><svg class="wires" fill="none">' +
     lines.join("") +
     "</svg>" +
-    tags
-      .map(
-        ([col, y, text]) =>
-          '<div class="section-tag" style="left:' +
-          xOf(col) +
-          "px;top:" +
-          y +
-          'px">' +
-          text +
-          "</div>",
-      )
-      .join("") +
-    titles
-      .map(
-        ([col, y, text]) =>
-          '<div class="round-title" style="left:' +
-          xOf(col) +
-          "px;top:" +
-          y +
-          'px">' +
-          text +
-          "</div>",
-      )
-      .join("") +
+    tags.map(label("section-tag")).join("") +
+    titles.map(label("round-title")).join("") +
     Object.entries(positions)
       .map(([n, p]) => matchCard(games[n], p.x, p.y, w))
       .join("") +
@@ -648,18 +737,12 @@ let adminTab = "scores",
   statsFor = "",
   statsAt = 0;
 function stageName(n) {
-  if (n === 34) return "Final";
-  if (n === 33) return "Disputa de 3º lugar";
-  if (n === 31 || n === 32) return "Semifinal";
-  if (n <= 8) return "Principal · 1ª rodada";
-  if (n <= 10) return "Principal · vagas 17 e 18";
-  if (n <= 12) return "Repescagem · entrada";
-  if (n <= 16) return "Principal · 2ª rodada";
-  if (n <= 20) return "Repescagem · 1ª rodada";
-  if (n <= 24) return "Repescagem · 2ª rodada";
-  if (n <= 26) return "Principal · classificatória";
-  if (n <= 28) return "Repescagem · 3ª rodada";
-  return "Repescagem · classificatória";
+  const st = S.stage(n);
+  if (st === "final") return "Final";
+  if (st === "third") return "Disputa de 3º lugar";
+  if (st === "semi") return "Semifinal";
+  if (st === "cross") return "Cruzamento";
+  return (st === "main" ? "Principal" : "Repescagem") + " · " + roundOf(n);
 }
 function draftFromEdition() {
   return {
@@ -802,11 +885,19 @@ function teamsPanel() {
   if (edition.archived)
     return '<p class="note">Edição encerrada: as duplas não podem mais ser alteradas.</p>';
   return (
-    '<form data-form="teams" class="builder admin-teams" novalidate><p class="help">Edite atletas, apelido, cor e símbolo de cada dupla. A ordem das vagas fica fixa depois da criação (ela define os confrontos).</p><ol class="roster"></ol><div class="builder-foot page-foot"><span class="counter"><span><b>0</b>/18 duplas prontas</span><span class="meter"><b></b></span></span><p role="alert" class="error"></p><button type="button" class="btn" data-act="teamsReset">Desfazer</button><button class="btn primary">Salvar duplas</button></div></form>'
+    '<form data-form="teams" class="builder admin-teams" novalidate><p class="help">Edite atletas, apelido, cor e símbolo de cada dupla. A vaga de cada dupla na chave foi sorteada' +
+    (count()
+      ? " e fica fixa depois do primeiro placar.</p>"
+      : '. Até o primeiro placar dá para sortear de novo.</p><div class="reshuffle"><button type="button" class="btn" data-act="shuffleAsk">' +
+        icon("shuffle") +
+        "Sortear posições de novo</button></div>") +
+    '<ol class="roster"></ol><div class="builder-foot page-foot"><span class="counter"><span><b>0</b>/<i>' +
+    edition.teams.length +
+    '</i> duplas prontas</span><span class="meter"><b></b></span></span><p role="alert" class="error"></p><button type="button" class="btn" data-act="teamsReset">Desfazer</button><button class="btn primary">Salvar duplas</button></div></form>'
   );
 }
 function settingsPanel() {
-  const left = 34 - count(),
+  const left = S.total - count(),
     link = editionUrl(edition);
   const card = (title, body, cls = "") =>
     '<section class="admin-card ' + cls + '"><h3>' + title + "</h3>" + body + "</section>";
@@ -850,7 +941,7 @@ function settingsPanel() {
       edition.archived
         ? '<p class="help">Edição encerrada. Os resultados ficam no histórico.</p>'
         : left
-          ? '<p class="help">Disponível depois dos 34 jogos. Faltam <b>' +
+          ? '<p class="help">Disponível depois dos ' + S.total + " jogos. Faltam <b>" +
             left +
             "</b>.</p>"
           : '<p class="help">Todos os jogos foram concluídos. Encerrar bloqueia alterações e mantém o histórico.</p>' +
@@ -882,7 +973,9 @@ function adminPanel() {
     status() +
     " · " +
     count() +
-    ' de 34 jogos</p></div></div><div class="admin-tabs" role="group" aria-label="Seções do painel">' +
+    " de " +
+    S.total +
+    ' jogos</p></div></div><div class="admin-tabs" role="group" aria-label="Seções do painel">' +
     tabs
       .map(
         ([k, l, ic]) =>
@@ -940,13 +1033,25 @@ function renderSection() {
         )
         .join("") +
       "</div>" +
+      (branch === "all"
+        ? '<button type="button" class="btn mirror-toggle" data-act="mirror" aria-pressed="' +
+          mirror +
+          '" title="Trocar o desenho da chave">' +
+          icon(mirror ? "mirror" : "bracket") +
+          (mirror ? "Espelhada" : "Linear") +
+          "</button>"
+        : "") +
       '<div class="legend"><span><i class="dot"></i>Concluído</span><span><i class="dot blue"></i>Disponível</span><span><i class="dot gray"></i>A definir</span></div>' +
       (full
         ? '<button type="button" class="btn close-full" data-act="expand">' +
           icon("expand") +
           "Sair da tela cheia</button>"
         : "") +
-      '</div><div class="canvas" tabindex="0" aria-label="Diagrama de confrontos. Arraste para navegar e use dois dedos para dar zoom."></div><div class="board-bottom"><span class="board-note">18 duplas · 34 jogos<span class="drag-hint"> · arraste para navegar</span><span class="rotate-hint">Use dois dedos para dar zoom</span></span><span class="zoom" role="group" aria-label="Zoom da chave"><button data-act="zoomOut" aria-label="Diminuir zoom">−</button><button class="zoom-val" data-act="zoomFit" title="Ajustar à tela" aria-label="Ajustar à tela">100%</button><button data-act="zoomIn" aria-label="Aumentar zoom">+</button>' +
+      '</div><div class="canvas" tabindex="0" aria-label="Diagrama de confrontos. Arraste para navegar e use dois dedos para dar zoom."></div><div class="board-bottom"><span class="board-note">' +
+      edition.teams.length +
+      " duplas · " +
+      S.total +
+      ' jogos<span class="drag-hint"> · arraste para navegar</span><span class="rotate-hint">Use dois dedos para dar zoom</span></span><span class="zoom" role="group" aria-label="Zoom da chave"><button data-act="zoomOut" aria-label="Diminuir zoom">−</button><button class="zoom-val" data-act="zoomFit" title="Ajustar à tela" aria-label="Ajustar à tela">100%</button><button data-act="zoomIn" aria-label="Aumentar zoom">+</button>' +
       (full
         ? ""
         : '<button data-act="expand" class="zoom-full" aria-label="Tela cheia" title="Tela cheia">' +
@@ -957,7 +1062,9 @@ function renderSection() {
     content = adminPanel();
   } else if (view === "teams") {
     content =
-      '<div class="section-title"><h2>Duplas inscritas</h2><span class="muted">18 duplas</span></div><div class="cards">' +
+      '<div class="section-title"><h2>Duplas inscritas</h2><span class="muted">' +
+      edition.teams.length +
+      ' duplas</span></div><div class="cards">' +
       edition.teams
         .map((name, i) => {
           const p = identity(i + 1),
@@ -1032,7 +1139,7 @@ function renderSection() {
   } else {
     content =
       '<div class="section-title"><h2>Classificação</h2></div><div class="rows">' +
-      [games[34].winner, games[34].loser, games[33].winner, games[33].loser]
+      [games[S.final].winner, games[S.final].loser, games[S.third].winner, games[S.third].loser]
         .map(
           (id, i) =>
             '<div class="row"><b class="kicker">' +
@@ -1042,7 +1149,7 @@ function renderSection() {
             '<span class="pair">' +
             esc(id ? edition.teams[id - 1] : "A definir") +
             "</span><small>Jogo " +
-            (i < 2 ? "34" : "33") +
+            num(i < 2 ? S.final : S.third) +
             "</small></div>",
         )
         .join("") +
@@ -1072,15 +1179,8 @@ function renderSection() {
 function showGame(n) {
   const g = games[n],
     can = edition.can_edit && !edition.archived && g.teams.every(Boolean);
-  const stage =
-    n === 34
-      ? "Final"
-      : n === 33
-        ? "Disputa de 3º lugar"
-        : n === 31 || n === 32
-          ? "Semifinal"
-          : "Confronto";
-  const paths = routes(n)
+  const stage = stageName(n);
+  const paths = routes(G, n)
     .map((r) => r.outcome + " → jogo " + num(r.number))
     .join(" · ");
   const previous = Object.values(games).find(
@@ -1136,7 +1236,7 @@ function showGame(n) {
       '</p></div><p class="help">' +
       (paths ||
         "Define o " +
-          (n === 34 ? "campeão e o vice." : "terceiro e o quarto colocados.")) +
+          (n === S.final ? "campeão e o vice." : "terceiro e o quarto colocados.")) +
       "</p></div>",
   );
 }
@@ -1171,7 +1271,23 @@ function showEditions() {
 function showRules() {
   modal(
     "Regulamento da chave",
-    '<div class="stack"><div class="box"><h3>18 duplas · 34 jogos</h3><p class="help">As vagas 1 a 16 entram nos jogos 1 a 8. As vagas 17 e 18 entram diretamente nos jogos 9 e 10.</p></div><div><h3>Repescagem</h3><p class="help">Os caminhos são fixos. O perdedor do jogo 25 segue para o jogo 30. O perdedor do jogo 26 segue para o jogo 29. Reencontros podem ocorrer.</p></div><div><h3>Decisões</h3><p class="help">Os vencedores das semifinais 31 e 32 disputam o título no jogo 34. Os perdedores disputam o 3º lugar no jogo 33.</p></div><p class="help">Esta versão registra placares inteiros com um vencedor definido. Sets, pontuação-alvo, desempates e W.O. dependem do regulamento da organização.</p></div>',
+    '<div class="stack"><div class="box"><h3>' +
+      edition.teams.length +
+      " duplas · " +
+      S.total +
+      ' jogos</h3><p class="help">Dupla eliminação: quem perde duas vezes está fora. O total de jogos é sempre duplas × 2 − 2. As vagas são sorteadas; quando o número de duplas não fecha a chave, algumas vagas entram direto na 2ª rodada.</p></div><div><h3>Repescagem</h3><p class="help">Quem perde na chave principal vai para a repescagem, que tem dois lados. Os perdedores da classificatória da principal (jogos ' +
+      num(S.mainRoots[0]) +
+      " e " +
+      num(S.mainRoots[1]) +
+      ') trocam de lado e enfrentam os sobreviventes da repescagem nos cruzamentos. Reencontros podem ocorrer.</p></div><div><h3>Decisões</h3><p class="help">Os vencedores das semifinais (jogos ' +
+      num(S.semis[0]) +
+      " e " +
+      num(S.semis[1]) +
+      ") disputam o título no jogo " +
+      num(S.final) +
+      ". Os perdedores disputam o 3º lugar no jogo " +
+      num(S.third) +
+      '.</p></div><p class="help">Esta versão registra placares inteiros com um vencedor definido. Sets, pontuação-alvo, desempates e W.O. dependem do regulamento da organização.</p></div>',
   );
 }
 function auth(mode = "login") {
@@ -1255,13 +1371,20 @@ function newEdition() {
       '<label class="checklabel"><input type="checkbox" name="visible"' +
       (draft.visible ? " checked" : "") +
       "> Exibir esta edição na área pública</label>" +
-      '<div class="builder-head"><div><h3>Duplas</h3><p class="help">A ordem define a vaga. As vagas 17 e 18 entram direto nos jogos 9 e 10. Toque no escudo para escolher cor e símbolo.</p></div>' +
+      '<div class="builder-head"><div><h3>Duplas</h3><p class="help">De ' +
+      MIN_TEAMS +
+      " a " +
+      MAX_TEAMS +
+      ' duplas. As posições na chave são sorteadas ao criar (dá para sortear de novo no painel até o primeiro placar). Toque no escudo para escolher cor e símbolo.</p></div>' +
       '<button type="button" class="btn" data-act="pasteToggle">' +
       icon("paste") +
       "Colar lista</button></div>" +
       '<div class="paste" hidden><label>Uma dupla por linha (ex.: “Ana e Bia”)<textarea id="paste-text" rows="6" placeholder="Ana e Bia&#10;Caio e Vini"></textarea></label><button type="button" class="btn" data-act="pasteApply">Preencher vagas</button></div>' +
       '<ol class="roster"></ol>' +
-      '<div class="builder-foot"><span class="counter"><span><b>0</b>/18 duplas prontas</span><span class="meter"><b></b></span></span><p role="alert" class="error"></p><button class="btn primary">Criar edição</button></div>' +
+      '<div class="roster-more"><button type="button" class="btn" data-act="addSlot">' +
+      icon("plus") +
+      'Adicionar dupla</button><span class="bracket-info"></span></div>' +
+      '<div class="builder-foot"><span class="counter"><span><b>0</b>/<i>0</i> duplas prontas</span><span class="meter"><b></b></span></span><p role="alert" class="error"></p><button class="btn primary">Criar edição</button></div>' +
       "</form>",
     true,
   );
@@ -1283,7 +1406,7 @@ function blankSlot(i) {
 function loadDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
-    if (d && Array.isArray(d.slots) && d.slots.length === 18)
+    if (d && Array.isArray(d.slots) && d.slots.length >= 1 && d.slots.length <= MAX_TEAMS)
       return {
         title: String(d.title || ""),
         visible: d.visible !== false,
@@ -1299,7 +1422,7 @@ function loadDraft() {
   return {
     title: "",
     visible: true,
-    slots: Array.from({ length: 18 }, (_, i) => blankSlot(i)),
+    slots: Array.from({ length: 12 }, (_, i) => blankSlot(i)),
   };
 }
 function saveDraft() {
@@ -1342,17 +1465,26 @@ function slotCard(s, i) {
     i +
     '" aria-expanded="' +
     open +
-    '" aria-label="Cor e símbolo da vaga ' +
+    '" aria-label="Cor e símbolo da ' + (draftMode === "edit" ? "vaga " : "dupla ") +
     num(i + 1) +
     '">' +
     glyph(s.i) +
-    '</button><div class="slot-title"><small>Vaga ' +
+    '</button><div class="slot-title"><small>' +
+    (draftMode === "edit" ? "Vaga " : "Dupla ") +
     num(i + 1) +
     '</small><strong class="slot-name">' +
     (name ? esc(name) : "Dupla " + num(i + 1)) +
     '</strong></div><span class="ready">' +
     icon("check") +
-    "Pronta</span></div>" +
+    "Pronta</span>" +
+    (draftMode === "new" && draft.slots.length > MIN_TEAMS
+      ? '<button type="button" class="iconbtn slot-remove" data-remove="' +
+        i +
+        '" aria-label="Remover dupla ' +
+        num(i + 1) +
+        '" title="Remover">×</button>'
+      : "") +
+    "</div>" +
     (open
       ? '<div class="picker"><div class="swatches" role="group" aria-label="Cor">' +
         palette
@@ -1396,19 +1528,19 @@ function slotCard(s, i) {
       : "") +
     '<div class="slot-fields"><input data-slot="' +
     i +
-    '" data-f="a" maxlength="30" autocomplete="off" placeholder="Atleta 1" aria-label="Vaga ' +
+    '" data-f="a" maxlength="30" autocomplete="off" placeholder="Atleta 1" aria-label="' + (draftMode === "edit" ? "Vaga " : "Dupla ") +
     num(i + 1) +
     ', atleta 1" value="' +
     esc(s.a) +
     '"><span class="amp" aria-hidden="true">&amp;</span><input data-slot="' +
     i +
-    '" data-f="b" maxlength="30" autocomplete="off" placeholder="Atleta 2" aria-label="Vaga ' +
+    '" data-f="b" maxlength="30" autocomplete="off" placeholder="Atleta 2" aria-label="' + (draftMode === "edit" ? "Vaga " : "Dupla ") +
     num(i + 1) +
     ', atleta 2" value="' +
     esc(s.b) +
     '"></div><input class="nick" data-slot="' +
     i +
-    '" data-f="n" maxlength="30" autocomplete="off" placeholder="Apelido da dupla (opcional)" aria-label="Vaga ' +
+    '" data-f="n" maxlength="30" autocomplete="off" placeholder="Apelido da dupla (opcional)" aria-label="' + (draftMode === "edit" ? "Vaga " : "Dupla ") +
     num(i + 1) +
     ', apelido" value="' +
     esc(s.n) +
@@ -1422,16 +1554,37 @@ function renderRoster(focus) {
   updateCounter();
   if (focus) roster.querySelector(focus)?.focus();
 }
+/** Com n duplas: jogos e quantas entram direto na 2ª rodada. */
+function bracketInfo(n) {
+  if (n < MIN_TEAMS) return "Mínimo de " + MIN_TEAMS + " duplas";
+  const byes = 2 ** Math.ceil(Math.log2(n)) - n;
+  return (
+    n +
+    " duplas · " +
+    (2 * n - 2) +
+    " jogos" +
+    (byes ? " · " + byes + (byes > 1 ? " entram" : " entra") + " direto na 2ª rodada" : "")
+  );
+}
 function updateCounter() {
-  const ready = draft.slots.filter(slotReady).length,
-    counter = rosterRoot().querySelector(".counter");
+  const total = draft.slots.length,
+    ready = draft.slots.filter(slotReady).length,
+    root = rosterRoot(),
+    counter = root.querySelector(".counter");
   if (!counter) return;
   counter.querySelector("b").textContent = ready;
-  counter.querySelector(".meter b").style.width = (ready / 18) * 100 + "%";
-  counter.classList.toggle("full", ready === 18);
+  counter.querySelector("i").textContent = total;
+  counter.querySelector(".meter b").style.width = (ready / total) * 100 + "%";
+  counter.classList.toggle("full", ready === total && total >= MIN_TEAMS);
+  const info = root.querySelector(".bracket-info");
+  if (info) info.textContent = bracketInfo(total);
+  const add = root.querySelector('[data-act="addSlot"]');
+  if (add) add.disabled = total >= MAX_TEAMS;
 }
-/** Valida as 18 vagas do construtor e devolve nomes + identidades (marca as vagas com erro). */
+/** Valida as vagas do construtor e devolve nomes + identidades (marca as vagas com erro). */
 function collectDraft(f) {
+  if (draft.slots.length < MIN_TEAMS || draft.slots.length > MAX_TEAMS)
+    throw Error("O campeonato precisa ter de " + MIN_TEAMS + " a " + MAX_TEAMS + " duplas.");
   const teams = draft.slots.map(teamName),
     seen = new Map(),
     bad = new Set();
@@ -1466,12 +1619,23 @@ function collectDraft(f) {
     })),
   };
 }
+/** Embaralha 0..n-1 (sorteio das vagas). */
+function shuffled(n) {
+  const order = Array.from({ length: n }, (_, i) => i),
+    rnd = new Uint32Array(n);
+  crypto.getRandomValues(rnd);
+  for (let i = n - 1; i > 0; i--) {
+    const j = rnd[i] % (i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+}
 function parseTeams(text) {
   return text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
-    .slice(0, 18)
+    .slice(0, MAX_TEAMS)
     .map((line) => {
       const [a, ...rest] = line.split(/\s+e\s+|\s*[&\/+,;]\s*/i);
       return { a: (a || "").slice(0, 30), b: rest.join(" ").slice(0, 30) };
@@ -1663,6 +1827,40 @@ document.addEventListener("click", async (ev) => {
       .finally(() => (b.disabled = false));
     return;
   }
+  if (a === "addSlot" && draft && draft.slots.length < MAX_TEAMS) {
+    draft.slots.push(blankSlot(draft.slots.length));
+    saveDraft();
+    renderRoster('[data-slot="' + (draft.slots.length - 1) + '"][data-f="a"]');
+    return;
+  }
+  if (b.dataset.remove && draft && draft.slots.length > MIN_TEAMS) {
+    draft.slots.splice(+b.dataset.remove, 1);
+    openPick = null;
+    saveDraft();
+    renderRoster();
+    return;
+  }
+  if (a === "mirror") {
+    mirror = !mirror;
+    try {
+      localStorage.setItem(MIRROR_KEY, mirror ? "1" : "0");
+    } catch {}
+    zoom = null;
+    renderSection();
+    return;
+  }
+  if (a === "shuffleAsk") {
+    modal(
+      "Sortear posições de novo",
+      '<form data-form="shuffle" class="stack"><p class="help">As ' +
+        edition.teams.length +
+        " duplas trocam de vaga na chave por sorteio. Os celulares com aviso continuam seguindo a mesma dupla. Alterações não salvas na lista de duplas serão descartadas.</p>" +
+        '<button class="btn primary">' +
+        icon("shuffle") +
+        "Sortear agora</button></form>",
+    );
+    return;
+  }
   if (a === "followOpen") return chooseTeam();
   if (a === "iosHelp") return iosHelp();
   if (a === "pushOn" && mySlot) {
@@ -1687,13 +1885,21 @@ document.addEventListener("click", async (ev) => {
     if (!box.hidden) box.querySelector("textarea").focus();
     return;
   }
-  if (a === "pasteApply" && draft) {
+  if (a === "pasteApply" && draft) try {
     const rows = parseTeams(dialogBody.querySelector("#paste-text").value);
-    rows.forEach((r, i) => Object.assign(draft.slots[i], r));
+    if (!rows.length) throw Error("Cole pelo menos uma dupla por linha.");
+    draft.slots = Array.from({ length: Math.max(rows.length, MIN_TEAMS) }, (_, i) => ({
+      ...(draft.slots[i] || blankSlot(i)),
+      ...(rows[i] || { a: "", b: "" }),
+      n: rows[i] ? "" : draft.slots[i]?.n || "",
+    }));
     saveDraft();
     dialogBody.querySelector(".paste").hidden = true;
     renderRoster();
     notify(rows.length + " duplas preenchidas");
+    return;
+  } catch (e) {
+    notify(e.message);
     return;
   }
   if (a === "coverClear") {
@@ -1765,7 +1971,7 @@ document.addEventListener("click", async (ev) => {
     if (a === "archive")
       modal(
         "Encerrar edição",
-        '<form data-form="archive"><p class="help">Os 34 resultados serão preservados no histórico e a edição será fechada para alterações.</p><button class="btn primary">Confirmar encerramento</button></form>',
+        '<form data-form="archive"><p class="help">Os ' + S.total + ' resultados serão preservados no histórico e a edição será fechada para alterações.</p><button class="btn primary">Confirmar encerramento</button></form>',
       );
   } catch (e) {
     notify(e.message);
@@ -1974,7 +2180,10 @@ document.addEventListener("submit", async (ev) => {
         f.querySelector('[name="title"]').focus();
         throw Error("Dê um nome ao campeonato.");
       }
-      const { teams, profiles } = collectDraft(f),
+      const picked = collectDraft(f),
+        order = shuffled(picked.teams.length),
+        teams = order.map((i) => picked.teams[i]),
+        profiles = order.map((i) => picked.profiles[i]),
         base = { p_title: title, p_teams: teams, p_public: data.has("visible") };
       submit.textContent = coverBlob ? "Enviando foto…" : "Criando…";
       const cover = coverBlob ? await uploadCover(coverBlob) : null;
@@ -2008,6 +2217,15 @@ document.addEventListener("submit", async (ev) => {
       });
       draftFor = "";
       custom = "Duplas atualizadas";
+    }
+    if (mode === "shuffle") {
+      await rpc("shuffle", {
+        p_id: edition.id,
+        p_version: edition.version,
+        p_order: shuffled(edition.teams.length).map((i) => i + 1),
+      });
+      draftFor = "";
+      custom = "Posições sorteadas";
     }
     if (mode === "settings") {
       const title = String(data.get("title") || "").trim();
@@ -2123,3 +2341,4 @@ refresh();
 setInterval(() => {
   if (!document.hidden) refresh();
 }, 15000);
+
