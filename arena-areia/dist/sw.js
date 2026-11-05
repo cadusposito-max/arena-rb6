@@ -1,5 +1,5 @@
 // ARENA RB6 · service worker: app instalável, funciona sem sinal e recebe avisos.
-const CACHE = "arena-rb6-v2";
+const CACHE = "arena-rb6-v3";
 const SHELL = [
   "./",
   "./index.html",

@@ -160,12 +160,12 @@ header {
 }
 .brand img {
   width: auto;
-  height: 40px;
+  height: 44px;
   margin-right: 8px;
   transition: transform 0.5s var(--ease);
 }
 .brand:hover img {
-  transform: rotate(-8deg) scale(1.06);
+  transform: translateY(-2px) scale(1.06);
 }
 .brand span,
 .footbrand b {
@@ -1376,8 +1376,8 @@ textarea {
   }
   .brand img {
     width: auto;
-    height: 30px;
-    margin-right: 4px;
+    height: 36px;
+    margin-right: 5px;
   }
   nav {
     gap: 0;
