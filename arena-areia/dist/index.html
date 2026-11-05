@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f4eddf" />
+    <meta
+      name="description"
+      content="Campeonatos de futevôlei. Acompanhe duplas, confrontos e resultados na ARENA RB6."
+    />
+    <title>ARENA RB6 · Campeonatos</title>
+    <link rel="icon" href="./assets/logo.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="ARENA RB6" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="shell bar">
+        <a class="brand" href="?" aria-label="ARENA RB6, início"
+          ><img src="./assets/logo.svg" alt="" />ARENA <span>RB6</span></a
+        >
+        <nav>
+          <button data-act="editions" class="nav-active">Campeonatos</button
+          ><button data-act="rules">Regulamento</button>
+        </nav>
+        <button class="organizer" data-act="manage">
+          <i data-i="user"></i><span>Área do organizador</span
+          ><i data-i="arrow"></i>
+        </button>
+      </div>
+    </header>
+    <main class="shell">
+      <div class="crumb">
+        <button data-act="editions">Campeonatos</button><b> / </b
+        ><span id="crumb-title">Copa da Praia</span>
+      </div>
+      <section class="hero">
+        <div class="hero-art"></div>
+        <div class="hero-inner">
+          <div class="eyebrow"><i data-i="ball"></i> FUTEVÔLEI</div>
+          <h1 id="title">COPA DA <em>PRAIA</em></h1>
+          <div class="hero-meta">
+            <span class="badge" id="status"></span
+            ><span class="edition-type" id="edition-type"></span>
+          </div>
+        </div>
+        <button class="share" data-act="share">
+          <i data-i="share"></i> Compartilhar
+        </button>
+      </section>
+      <section
+        class="metrics"
+        id="metrics"
+        aria-label="Resumo do campeonato"
+      ></section>
+      <section id="follow" class="follow" aria-live="polite"></section>
+      <div class="viewtabs" role="group" aria-label="Seções do campeonato">
+        <button data-view="bracket"><i data-i="bracket"></i>Chaveamento</button
+        ><button data-view="matches"><i data-i="game"></i>Partidas</button
+        ><button data-view="teams"><i data-i="teams"></i>Duplas</button
+        ><button data-view="ranking">
+          <i data-i="trophy"></i>Classificação</button
+        ><button data-view="admin" class="admin-tab" hidden>
+          <i data-i="settings"></i>Organizar
+        </button>
+      </div>
+      <section id="content"></section>
+      <p id="net" class="warn" role="status"></p>
+    </main>
+    <footer class="shell">
+      <span class="footbrand">ARENA <b>RB6</b></span
+      ><span>Central de campeonatos</span
+      ><button data-act="rules">Regulamento</button>
+    </footer>
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <h2 id="dialog-title"></h2>
+        <button class="iconbtn" aria-label="Fechar" data-act="close">×</button>
+      </div>
+      <div id="dialog-body"></div>
+    </dialog>
+    <div id="toast" role="status"></div>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
