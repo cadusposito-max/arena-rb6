@@ -914,7 +914,7 @@ h2 {
   font-size: 12px;
   border-top: 1px solid var(--line-soft);
 }
-.board-bottom span:last-child {
+.board-bottom > span:last-child {
   display: flex;
   gap: 6px;
 }
@@ -2989,4 +2989,15 @@ body.lock {
   font-size: 0;
   gap: 0;
   padding: 4px;
+}
+/* Logo no rodapé (versão branca sobre o verde-escuro) */
+footer .footbrand img {
+  width: auto;
+  height: 48px;
+  margin-right: 10px;
+}
+@media (max-width: 580px) {
+  footer .footbrand img {
+    height: 40px;
+  }
 }
