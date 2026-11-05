@@ -16,14 +16,11 @@ test("modelo sem ciclos e com 18 vagas únicas", () => {
     seeds.sort((a, b) => a - b),
     Array.from({ length: 18 }, (_, i) => i + 1),
   );
-  const sql = readFileSync(
-    new URL(
-      "../supabase/migrations/202611050001_arena_r6.sql",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  assert.ok(sql.includes(JSON.stringify(slots)));
+});
+// O backend (supabase/) fica só no computador, fora do repositório público.
+const MIGRATION = new URL("../supabase/migrations/202611050001_arena_r6.sql", import.meta.url);
+test("banco usa o mesmo grafo da chave", { skip: !existsSync(MIGRATION) && "supabase/ fora do repositório" }, () => {
+  assert.ok(readFileSync(MIGRATION, "utf8").includes(JSON.stringify(slots)));
 });
 test("repescagem e finais seguem o desenho", () => {
   for (const [n, pair] of [
