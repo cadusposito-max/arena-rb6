@@ -159,13 +159,13 @@ header {
   gap: 5px;
 }
 .brand img {
-  width: 38px;
-  height: 38px;
-  margin-right: 6px;
+  width: auto;
+  height: 40px;
+  margin-right: 8px;
   transition: transform 0.5s var(--ease);
 }
 .brand:hover img {
-  transform: rotate(-35deg);
+  transform: rotate(-8deg) scale(1.06);
 }
 .brand span,
 .footbrand b {
@@ -1375,9 +1375,9 @@ textarea {
     gap: 3px;
   }
   .brand img {
-    width: 28px;
-    height: 28px;
-    margin-right: 2px;
+    width: auto;
+    height: 30px;
+    margin-right: 4px;
   }
   nav {
     gap: 0;

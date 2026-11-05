@@ -67,4 +67,4 @@ Modelo v1 da imagem fornecida, com cruzamentos P25 → J30 e P26 → J29. O jogo
 
 Este MVP assume 18 duplas, posicionamento manual, dois placares inteiros diferentes e encerramento após os 34 jogos. A organização deve validar regras específicas de sets, pontuação-alvo, W.O., desistências e empates antes de uso oficial. Teste restauração de backup e os e-mails no domínio de produção antes do primeiro evento.
 
-Imagem ilustrativa de futevôlei gerada com IA para o projeto. Fontes Barlow Condensed e Inter sob SIL Open Font License (licenças em `dist/assets/`).
+Logo em `brand/` (escudo e versão horizontal, fundo transparente); os ícones do app em `dist/assets/` saem dela. Imagem ilustrativa de futevôlei gerada com IA para o projeto. Fontes Barlow Condensed e Inter sob SIL Open Font License (licenças em `dist/assets/`).
