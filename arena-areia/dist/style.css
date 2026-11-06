@@ -3046,3 +3046,129 @@ footer .footbrand img {
 .courts-field small {
   font-weight: 400;
 }
+
+/* ==========================================================
+   Confrontos: trocar duplas de lugar
+   ========================================================== */
+.swap-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 12px;
+}
+.swap-row {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.swap-row.done {
+  background: var(--paper);
+  box-shadow: none;
+}
+.swap-body {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: stretch;
+  gap: 8px;
+}
+.swap-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1.5px solid transparent;
+  background: var(--sand);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
+}
+.swap-team:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--c) 45%, transparent);
+  background: #fff;
+}
+.swap-team.on {
+  border-color: var(--sun);
+  background: var(--sun-50);
+  box-shadow: 0 0 0 3px rgb(238 100 32 / 0.18);
+}
+.swap-team:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.swap-team .crest {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+.swap-team span {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.swap-team small {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.swap-src {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1.5px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+}
+.swap-hint {
+  position: sticky;
+  top: 70px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 14px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: var(--shadow-md);
+}
+.swap-hint .btn {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+/* Celular: 4 abas do painel cabem com o ícone em cima do nome */
+@media (max-width: 580px) {
+  .admin-tabs {
+    gap: 5px;
+  }
+  .admin-tabs button {
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 4px 7px;
+    font-size: 11px;
+    min-width: 0;
+  }
+  .admin-tabs button svg {
+    width: 18px;
+    height: 18px;
+  }
+}

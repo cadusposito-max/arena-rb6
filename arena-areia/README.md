@@ -53,6 +53,10 @@ Requer a migração `202611050006_chave_flexivel.sql` (modelos de chave de 6 a 3
 
 Requer a migração `202611060007_quadras.sql`. Ao criar o campeonato (ou em **Organizar → Edição → Quadras**) informe quantas quadras estão em uso (1 a 8). Os primeiros jogos prontos ocupam as quadras sem aviso. Quando o placar de um jogo em quadra é salvo, a quadra libera e o próximo jogo da fila (na ordem da chave) é chamado para ela automaticamente, com o aviso "é a sua vez · Quadra N" no celular das duas duplas; quem ficou com o jogo definido mas sem quadra livre recebe "próximo jogo definido". O placar e o novo mapa de quadras são gravados na mesma transação. Na chave, jogos em andamento aparecem como **Quadra N** (ponto vermelho) e o card "Você segue" mostra "É a sua vez" ou a posição na fila. O botão **Chamar** continua disponível para chamar um jogo fora da ordem. A lógica fica em `dist/courts.mjs` e os testes simulam campeonatos inteiros com 1 a 4 quadras.
 
+## Ajustar confrontos
+
+Requer a migração `202611060008_trocar_duplas.sql`. Em **Organizar → Confrontos** aparecem os jogos de entrada de cada dupla (inclusive quem entra direto na 2ª rodada). Toque em uma dupla e depois em outra para trocar as duas de lugar na chave. Vale a qualquer momento para duplas que ainda não jogaram; quem já jogou fica travado. Os avisos dos celulares acompanham a dupla e a troca fica registrada no histórico. Se o jogo de uma delas já estiver em quadra, o site lembra de usar **Chamar de novo**. O botão **Sortear todas as posições de novo** também fica nessa aba (até o primeiro placar).
+
 ## Painel do organizador
 
 Organizadores logados veem a aba **Organizar** (e entram direto nela ao fazer login). Requer a migração `202611050005_painel_organizador.sql`.

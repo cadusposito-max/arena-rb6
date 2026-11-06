@@ -942,15 +942,129 @@ function teamsPanel() {
   if (edition.archived)
     return '<p class="note">Edição encerrada: as duplas não podem mais ser alteradas.</p>';
   return (
-    '<form data-form="teams" class="builder admin-teams" novalidate><p class="help">Edite atletas, apelido, cor e símbolo de cada dupla. A vaga de cada dupla na chave foi sorteada' +
-    (count()
-      ? " e fica fixa depois do primeiro placar.</p>"
-      : '. Até o primeiro placar dá para sortear de novo.</p><div class="reshuffle"><button type="button" class="btn" data-act="shuffleAsk">' +
-        icon("shuffle") +
-        "Sortear posições de novo</button></div>") +
+    '<form data-form="teams" class="builder admin-teams" novalidate><p class="help">Edite atletas, apelido, cor e símbolo de cada dupla. Para mudar quem enfrenta quem (sortear de novo ou trocar duas duplas de lugar), use a aba <b>Confrontos</b>.</p>' +
     '<ol class="roster"></ol><div class="builder-foot page-foot"><span class="counter"><span><b>0</b>/<i>' +
     edition.teams.length +
     '</i> duplas prontas</span><span class="meter"><b></b></span></span><p role="alert" class="error"></p><button type="button" class="btn" data-act="teamsReset">Desfazer</button><button class="btn primary">Salvar duplas</button></div></form>'
+  );
+}
+/* ---------- Confrontos: sortear de novo e trocar duas duplas de lugar ---------- */
+let swapPick = null;
+/** Vaga → primeiro jogo da dupla (onde ela entra na chave). */
+function firstGames() {
+  const first = new Map();
+  G.forEach((refs, i) =>
+    refs.forEach((r) => r[0] === "S" && first.set(Number(r.slice(1)), i + 1)),
+  );
+  return first;
+}
+const hasPlayed = (slot, first = firstGames()) => Boolean(games[first.get(slot)]?.score);
+function matchupsPanel() {
+  if (edition.archived)
+    return '<p class="note">Edição encerrada: os confrontos não podem mais ser alterados.</p>';
+  const first = firstGames(),
+    live = liveNow(),
+    list = [...new Set(first.values())].sort((a, b) => a - b),
+    team = (slot) => {
+      const played = hasPlayed(slot, first);
+      return (
+        '<button type="button" class="swap-team' +
+        (swapPick === slot ? " on" : "") +
+        '" data-swap="' +
+        slot +
+        '"' +
+        (played ? ' disabled title="Esta dupla já jogou"' : "") +
+        ' style="--c:' +
+        identity(slot).c +
+        '">' +
+        crest(slot) +
+        "<span>" +
+        esc(edition.teams[slot - 1]) +
+        "<small>Vaga " +
+        num(slot) +
+        (played ? " · já jogou" : "") +
+        "</small></span></button>"
+      );
+    },
+    side = (ref) =>
+      ref[0] === "S"
+        ? team(Number(ref.slice(1)))
+        : '<span class="swap-src">' + esc(sourceLabel(ref)) + "</span>",
+    rows = list
+      .map((n) => {
+        const g = games[n],
+          court = courtOf(live, n),
+          bye = g.refs.some((r) => r[0] !== "S");
+        return (
+          '<div class="swap-row' +
+          (g.score ? " done" : "") +
+          '"><div class="sr-head"><span class="kicker">Jogo ' +
+          num(n) +
+          '</span><span class="sr-stage">' +
+          stageName(n) +
+          (bye ? " · entra direto" : "") +
+          "</span>" +
+          (g.score
+            ? '<span class="chip ok">' + icon("check") + "Concluído</span>"
+            : court
+              ? '<span class="chip live"><i class="dot live"></i>Quadra ' + court + "</span>"
+              : "") +
+          '</div><div class="swap-body">' +
+          side(g.refs[0]) +
+          '<span class="sr-x">×</span>' +
+          side(g.refs[1]) +
+          "</div></div>"
+        );
+      })
+      .join("");
+  return (
+    '<section class="admin-group"><h3>Ajustar confrontos</h3><p class="help">Toque em uma dupla e depois em outra: as duas trocam de lugar na chave. Só dá para trocar duplas que ainda não jogaram. Os celulares com aviso continuam seguindo a mesma dupla.</p>' +
+    (swapPick
+      ? '<div class="swap-hint"><span>Escolha com quem <b>' +
+        esc(edition.teams[swapPick - 1]) +
+        '</b> vai trocar de lugar.</span><button type="button" class="btn" data-act="swapCancel">Cancelar</button></div>'
+      : "") +
+    (count()
+      ? ""
+      : '<div class="reshuffle"><button type="button" class="btn" data-act="shuffleAsk">' +
+        icon("shuffle") +
+        "Sortear todas as posições de novo</button></div>") +
+    '<div class="swap-list">' +
+    rows +
+    "</div></section>"
+  );
+}
+function swapAsk(a, b) {
+  const first = firstGames(),
+    live = liveNow(),
+    onCourt = [first.get(a), first.get(b)].filter((n, i, all) => courtOf(live, n) && all.indexOf(n) === i);
+  modal(
+    "Trocar duplas de lugar",
+    '<form data-form="swap" data-a="' +
+      a +
+      '" data-b="' +
+      b +
+      '" class="stack"><p class="help"><b>' +
+      esc(edition.teams[a - 1]) +
+      "</b> (vaga " +
+      num(a) +
+      ", jogo " +
+      num(first.get(a)) +
+      ") e <b>" +
+      esc(edition.teams[b - 1]) +
+      "</b> (vaga " +
+      num(b) +
+      ", jogo " +
+      num(first.get(b)) +
+      ") trocam de lugar na chave.</p>" +
+      (onCourt.length
+        ? '<p class="note">' +
+          onCourt.map((n) => "O jogo " + num(n) + " já está na Quadra " + courtOf(live, n)).join(" e ") +
+          ": depois de trocar, use <b>Chamar de novo</b> em Placares para avisar as duplas certas.</p>"
+        : "") +
+      '<button class="btn primary">' +
+      icon("shuffle") +
+      "Trocar</button></form>",
   );
 }
 function settingsPanel() {
@@ -1029,6 +1143,7 @@ function adminPanel() {
   const tabs = [
     ["scores", "Placares", "game"],
     ["teams", "Duplas", "teams"],
+    ["matchups", "Confrontos", "bracket"],
     ["settings", "Edição", "settings"],
   ];
   return (
@@ -1061,7 +1176,9 @@ function adminPanel() {
       ? scoresPanel()
       : adminTab === "teams"
         ? teamsPanel()
-        : settingsPanel())
+        : adminTab === "matchups"
+          ? matchupsPanel()
+          : settingsPanel())
   );
 }
 function openPanel(tab) {
@@ -1860,6 +1977,7 @@ document.addEventListener("click", async (ev) => {
   if (b.dataset.adminTab) {
     adminTab = b.dataset.adminTab;
     if (adminTab === "teams") draftFor = ""; // recarrega as duplas da edição
+    swapPick = null;
     renderSection();
     return;
   }
@@ -1923,6 +2041,19 @@ document.addEventListener("click", async (ev) => {
       localStorage.setItem(MIRROR_KEY, mirror ? "1" : "0");
     } catch {}
     zoom = null;
+    renderSection();
+    return;
+  }
+  if (b.dataset.swap) {
+    const slot = Number(b.dataset.swap);
+    if (!swapPick || swapPick === slot) {
+      swapPick = swapPick === slot ? null : slot;
+      renderSection();
+    } else swapAsk(swapPick, slot);
+    return;
+  }
+  if (a === "swapCancel") {
+    swapPick = null;
     renderSection();
     return;
   }
@@ -2300,6 +2431,17 @@ document.addEventListener("submit", async (ev) => {
       draftFor = "";
       custom = "Duplas atualizadas";
     }
+    if (mode === "swap") {
+      await rpc("swap", {
+        p_id: edition.id,
+        p_version: edition.version,
+        p_a: Number(f.dataset.a),
+        p_b: Number(f.dataset.b),
+      });
+      swapPick = null;
+      draftFor = "";
+      custom = "Duplas trocadas de lugar";
+    }
     if (mode === "shuffle") {
       await rpc("shuffle", {
         p_id: edition.id,
@@ -2442,5 +2584,6 @@ refresh();
 setInterval(() => {
   if (!document.hidden) refresh();
 }, 15000);
+
 
 
