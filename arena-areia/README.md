@@ -49,6 +49,10 @@ O site precisa estar em HTTPS (GitHub Pages já é).
 
 Requer a migração `202611050006_chave_flexivel.sql` (modelos de chave de 6 a 32 duplas, criação com qualquer tamanho, sorteio de vagas e avisos para até 32 vagas). Depois de rodá-la, publique de novo a função de avisos com o `index.ts` atual: ela passa a ler a chave de cada edição. O SQL é gerado por `supabase/scripts/make-migration-0006.mjs` a partir do motor do site; a pasta `supabase/` fica só no computador.
 
+## Quadras e chamada automática
+
+Requer a migração `202611060007_quadras.sql`. Ao criar o campeonato (ou em **Organizar → Edição → Quadras**) informe quantas quadras estão em uso (1 a 8). Os primeiros jogos prontos ocupam as quadras sem aviso. Quando o placar de um jogo em quadra é salvo, a quadra libera e o próximo jogo da fila (na ordem da chave) é chamado para ela automaticamente, com o aviso "é a sua vez · Quadra N" no celular das duas duplas; quem ficou com o jogo definido mas sem quadra livre recebe "próximo jogo definido". O placar e o novo mapa de quadras são gravados na mesma transação. Na chave, jogos em andamento aparecem como **Quadra N** (ponto vermelho) e o card "Você segue" mostra "É a sua vez" ou a posição na fila. O botão **Chamar** continua disponível para chamar um jogo fora da ordem. A lógica fica em `dist/courts.mjs` e os testes simulam campeonatos inteiros com 1 a 4 quadras.
+
 ## Painel do organizador
 
 Organizadores logados veem a aba **Organizar** (e entram direto nela ao fazer login). Requer a migração `202611050005_painel_organizador.sql`.

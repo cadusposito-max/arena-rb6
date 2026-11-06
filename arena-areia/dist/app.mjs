@@ -10,6 +10,15 @@ import {
   MAX_TEAMS,
 } from "./engine.mjs";
 import {
+  MAX_COURTS,
+  clampCourts,
+  liveCourts,
+  fillCourts,
+  afterResult,
+  courtOf,
+  queuePosition,
+} from "./courts.mjs";
+import {
   icon,
   crest,
   identity,
@@ -260,13 +269,25 @@ function nextFor(slot) {
     (g) => !g.score && g.teams.includes(slot),
   );
   if (pending) {
-    const other = pending.teams.find((t) => t !== slot);
+    const other = pending.teams.find((t) => t !== slot),
+      live = liveNow(),
+      court = other ? courtOf(live, pending.number) : null,
+      pos = other && !court ? queuePosition(live, games, pending.number) : null;
+    if (court)
+      return (
+        "<b>É a sua vez!</b> Jogo " +
+        num(pending.number) +
+        " na <b>Quadra " +
+        court +
+        "</b> contra " +
+        esc(edition.teams[other - 1])
+      );
     return (
       "Próximo: <b>Jogo " +
       num(pending.number) +
       "</b> " +
       (other
-        ? "contra " + esc(edition.teams[other - 1])
+        ? "contra " + esc(edition.teams[other - 1]) + (pos ? " · " + pos + "º na fila" : "")
         : "· adversário a definir")
     );
   }
@@ -589,12 +610,14 @@ function layout(kind, w) {
   seps.push([PAD, x(2 * W + 2) + w, lowTop - 80]);
   return { cards, titles, tags, seps };
 }
+/** Quadra → jogo agora (para a edição e os jogos abertos). */
+const liveNow = () => liveCourts(edition, games);
+const courtsOf = (e) => clampCourts(e?.courts);
 function phaseState(g) {
-  return g.score
-    ? ["", "Concluído"]
-    : g.teams.every(Boolean)
-      ? ["blue", "Disponível"]
-      : ["gray", "A definir"];
+  if (g.score) return ["", "Concluído"];
+  if (!g.teams.every(Boolean)) return ["gray", "A definir"];
+  const c = courtOf(liveNow(), g.number);
+  return c ? ["live", "Quadra " + c] : ["blue", "Na fila"];
 }
 function matchCard(g, x, y, w) {
   const [cls, label] = phaseState(g),
@@ -602,6 +625,7 @@ function matchCard(g, x, y, w) {
   return (
     '<button class="match' +
     (isFinal ? " is-final" : "") +
+    (cls === "live" ? " is-live" : "") +
     '" data-game="' +
     g.number +
     '" style="left:' +
@@ -779,7 +803,7 @@ async function loadStats(force = false) {
       : "Nenhum celular com aviso ligado";
   });
 }
-function scoreRow(g) {
+function scoreRow(g, court = null) {
   const done = Boolean(g.score),
     n = g.number;
   const side = (i) => {
@@ -814,7 +838,11 @@ function scoreRow(g) {
     '</span><span class="sr-stage">' +
     stageName(n) +
     "</span>" +
-    (done ? '<span class="chip ok">' + icon("check") + "Concluído</span>" : "") +
+    (done
+      ? '<span class="chip ok">' + icon("check") + "Concluído</span>"
+      : court
+        ? '<span class="chip live"><i class="dot live"></i>Quadra ' + court + "</span>"
+        : "") +
     '</div><div class="sr-body">' +
     side(0) +
     '<span class="sr-x">×</span>' +
@@ -826,35 +854,64 @@ function scoreRow(g) {
         '">' +
         icon("trash") +
         'Apagar</button><button class="btn primary">Salvar correção</button>'
-      : '<input name="court" class="sr-court" maxlength="30" placeholder="Quadra" aria-label="Quadra do jogo ' +
-        num(n) +
-        '"><button type="button" class="btn" data-act="callRow">' +
-        icon("megaphone") +
-        'Chamar</button><button class="btn primary">Salvar placar</button>') +
+      : court
+        ? '<input type="hidden" name="court" value="Quadra ' +
+          court +
+          '"><button type="button" class="btn" data-act="callRow" title="Manda o aviso de novo para as duas duplas">' +
+          icon("megaphone") +
+          'Chamar de novo</button><button class="btn primary">Salvar placar</button>'
+        : '<input name="court" class="sr-court" maxlength="30" placeholder="Quadra" aria-label="Quadra do jogo ' +
+          num(n) +
+          '"><button type="button" class="btn" data-act="callRow">' +
+          icon("megaphone") +
+          'Chamar</button><button class="btn primary">Salvar placar</button>') +
     '</div><p class="error" role="alert"></p></form>'
   );
 }
 function scoresPanel() {
   const all = Object.values(games),
-    ready = all.filter((g) => !g.score && g.teams.every(Boolean)),
+    live = liveNow(),
+    onCourt = Object.entries(live)
+      .map(([c, n]) => [Number(c), games[n]])
+      .sort((a, b) => a[0] - b[0]),
+    busy = new Set(Object.values(live)),
+    ready = all.filter((g) => !g.score && g.teams.every(Boolean) && !busy.has(g.number)),
     done = all.filter((g) => g.score).sort((a, b) => b.number - a.number),
-    waiting = all.filter((g) => !g.score && !g.teams.every(Boolean));
+    waiting = all.filter((g) => !g.score && !g.teams.every(Boolean)),
+    courts = courtsOf(edition),
+    free = courts - onCourt.length;
   if (edition.archived)
     return '<p class="note">Edição encerrada: os placares estão bloqueados e preservados no histórico.</p>';
   return (
     '<div class="admin-summary"><span><b>' +
+    onCourt.length +
+    "</b> em quadra</span><span><b>" +
     ready.length +
-    "</b> prontos para jogar</span><span><b>" +
+    "</b> na fila</span><span><b>" +
     done.length +
     "</b> concluídos</span><span><b>" +
     waiting.length +
-    '</b> aguardando</span></div><section class="admin-group"><h3>Prontos para jogar</h3><p class="help">Toque em <b>Chamar</b> para avisar as duplas no celular. Lance o placar assim que o jogo terminar: os próximos adversários são avisados sozinhos.</p><div class="score-list">' +
-    (ready.map(scoreRow).join("") ||
-      '<p class="box">Nenhum jogo pronto agora. Assim que um placar definir as duas duplas de um jogo, ele aparece aqui.</p>') +
+    '</b> aguardando</span></div><section class="admin-group"><h3>Em quadra</h3><p class="help">' +
+    courts +
+    (courts > 1 ? " quadras" : " quadra") +
+    '. Lance o placar assim que o jogo terminar: a quadra libera e o próximo jogo da fila é chamado <b>automaticamente</b> para ela, com aviso no celular das duas duplas. Os primeiros jogos não recebem aviso.</p><div class="score-list">' +
+    (onCourt.map(([c, g]) => scoreRow(g, c)).join("") ||
+      '<p class="box">Nenhum jogo em quadra agora.</p>') +
+    (free > 0 && onCourt.length
+      ? '<p class="box">' +
+        free +
+        (free > 1 ? " quadras livres" : " quadra livre") +
+        ": nenhum jogo pronto. Assim que um placar definir as duas duplas de um jogo, ele é chamado.</p>"
+      : "") +
     "</div></section>" +
+    (ready.length
+      ? '<section class="admin-group"><h3>Na fila</h3><p class="help">Prontos para jogar, na ordem em que serão chamados. Se precisar, chame um jogo fora da ordem com <b>Chamar</b>.</p><div class="score-list">' +
+        ready.map((g) => scoreRow(g)).join("") +
+        "</div></section>"
+      : "") +
     (done.length
       ? '<section class="admin-group"><h3>Concluídos</h3><p class="help">Para corrigir, troque os números e salve. Só é possível apagar um placar se os jogos seguintes ainda não tiverem resultado.</p><div class="score-list">' +
-        done.map(scoreRow).join("") +
+        done.map((g) => scoreRow(g)).join("") +
         "</div></section>"
       : "") +
     (waiting.length
@@ -910,6 +967,14 @@ function settingsPanel() {
         '"></label><label class="checklabel"><input type="checkbox" name="visible"' +
         (edition.public ? " checked" : "") +
         '> Exibir esta edição na área pública</label><p class="help">Edições privadas só aparecem para os organizadores.</p><button class="btn primary">Salvar alterações</button><p class="error" role="alert"></p></form>',
+    ) +
+    card(
+      "Quadras",
+      '<form data-form="courts" class="stack"><label>Quantas quadras estão em uso?<select name="courts">' +
+        Array.from({ length: MAX_COURTS }, (_, i) => i + 1)
+          .map((n) => '<option value="' + n + '"' + (n === courtsOf(edition) ? " selected" : "") + ">" + n + "</option>")
+          .join("") +
+        '</select></label><p class="help">Quando um jogo termina, o próximo da fila é chamado para a quadra que liberou. Com mais quadras, mais jogos acontecem ao mesmo tempo.</p><button class="btn primary">Salvar quadras</button><p class="error" role="alert"></p></form>',
     ) +
     card(
       "Foto de capa",
@@ -1041,7 +1106,7 @@ function renderSection() {
           (mirror ? "Espelhada" : "Linear") +
           "</button>"
         : "") +
-      '<div class="legend"><span><i class="dot"></i>Concluído</span><span><i class="dot blue"></i>Disponível</span><span><i class="dot gray"></i>A definir</span></div>' +
+      '<div class="legend"><span><i class="dot live"></i>Em quadra</span><span><i class="dot blue"></i>Na fila</span><span><i class="dot gray"></i>A definir</span><span><i class="dot"></i>Concluído</span></div>' +
       (full
         ? '<button type="button" class="btn close-full" data-act="expand">' +
           icon("expand") +
@@ -1269,24 +1334,29 @@ function showEditions() {
   );
 }
 function showRules() {
+  const n = edition.teams.length,
+    courts = courtsOf(edition);
   modal(
-    "Regulamento da chave",
-    '<div class="stack"><div class="box"><h3>' +
-      edition.teams.length +
+    "Regulamento",
+    '<div class="stack"><div><h3>Formato</h3><p class="help">Dupla eliminação: quem perde duas vezes está fora. O campeonato pode ter de ' +
+      MIN_TEAMS +
+      " a " +
+      MAX_TEAMS +
+      ' duplas, e o total de jogos é sempre o número de duplas × 2 − 2 (12 duplas = 22 jogos; 20 duplas = 38 jogos).</p></div><div><h3>Sorteio</h3><p class="help">As posições na chave são sorteadas. Quando o número de duplas não fecha a chave (8, 16 ou 32), algumas duplas sorteadas entram direto na 2ª rodada. O sorteio pode ser refeito até o primeiro placar.</p></div><div><h3>Repescagem</h3><p class="help">Quem perde na chave principal vai para a repescagem, que tem dois lados. Os perdedores da classificatória da principal trocam de lado e enfrentam os sobreviventes da repescagem nos cruzamentos. Reencontros podem ocorrer.</p></div><div><h3>Decisões</h3><p class="help">As semifinais reúnem os dois invictos e os dois vencedores dos cruzamentos. Os vencedores das semifinais disputam o título; os perdedores disputam o 3º lugar.</p></div><div><h3>Quadras e chamada</h3><p class="help">Os primeiros jogos começam em todas as quadras ao mesmo tempo. Quando um jogo termina, a quadra libera e o próximo jogo da fila é chamado para ela, com aviso no celular das duas duplas (para quem ativou os avisos).</p></div><div class="box"><h3>Nesta edição</h3><p class="help">' +
+      n +
       " duplas · " +
       S.total +
-      ' jogos</h3><p class="help">Dupla eliminação: quem perde duas vezes está fora. O total de jogos é sempre duplas × 2 − 2. As vagas são sorteadas; quando o número de duplas não fecha a chave, algumas vagas entram direto na 2ª rodada.</p></div><div><h3>Repescagem</h3><p class="help">Quem perde na chave principal vai para a repescagem, que tem dois lados. Os perdedores da classificatória da principal (jogos ' +
-      num(S.mainRoots[0]) +
-      " e " +
-      num(S.mainRoots[1]) +
-      ') trocam de lado e enfrentam os sobreviventes da repescagem nos cruzamentos. Reencontros podem ocorrer.</p></div><div><h3>Decisões</h3><p class="help">Os vencedores das semifinais (jogos ' +
+      " jogos · " +
+      courts +
+      (courts > 1 ? " quadras" : " quadra") +
+      ". Semifinais nos jogos " +
       num(S.semis[0]) +
       " e " +
       num(S.semis[1]) +
-      ") disputam o título no jogo " +
-      num(S.final) +
-      ". Os perdedores disputam o 3º lugar no jogo " +
+      ", 3º lugar no jogo " +
       num(S.third) +
+      " e final no jogo " +
+      num(S.final) +
       '.</p></div><p class="help">Esta versão registra placares inteiros com um vencedor definido. Sets, pontuação-alvo, desempates e W.O. dependem do regulamento da organização.</p></div>',
   );
 }
@@ -1371,6 +1441,11 @@ function newEdition() {
       '<label class="checklabel"><input type="checkbox" name="visible"' +
       (draft.visible ? " checked" : "") +
       "> Exibir esta edição na área pública</label>" +
+      '<label class="courts-field">Quantas quadras?<select name="courts">' +
+      Array.from({ length: MAX_COURTS }, (_, i) => i + 1)
+        .map((n) => '<option value="' + n + '"' + (n === clampCourts(draft.courts) ? " selected" : "") + ">" + n + (n > 1 ? " quadras" : " quadra") + "</option>")
+        .join("") +
+      '</select><small class="help">Os jogos são chamados para a quadra que liberar. Dá para mudar depois.</small></label>' +
       '<div class="builder-head"><div><h3>Duplas</h3><p class="help">De ' +
       MIN_TEAMS +
       " a " +
@@ -1410,6 +1485,7 @@ function loadDraft() {
       return {
         title: String(d.title || ""),
         visible: d.visible !== false,
+        courts: clampCourts(d.courts),
         slots: d.slots.map((s, i) => ({
           a: String(s.a || ""),
           b: String(s.b || ""),
@@ -1422,6 +1498,7 @@ function loadDraft() {
   return {
     title: "",
     visible: true,
+    courts: 1,
     slots: Array.from({ length: 12 }, (_, i) => blankSlot(i)),
   };
 }
@@ -1987,6 +2064,10 @@ document.addEventListener("change", async (ev) => {
     draft.visible = t.checked;
     saveDraft();
   }
+  if (t.name === "courts" && draft && t.closest(".builder")) {
+    draft.courts = clampCourts(t.value);
+    saveDraft();
+  }
   if (t.id === "cover-file" && t.files[0]) {
     const err = dialogBody.querySelector(".error");
     try {
@@ -2194,12 +2275,13 @@ document.addEventListener("submit", async (ev) => {
           ...base,
           p_profiles: profiles,
           p_cover: cover,
+          p_courts: clampCourts(data.get("courts")),
         });
       } catch (e) {
         if (!/could not find the function/i.test(e.message)) throw e;
-        id = await rpc("create", base);
-        note =
-          " (sem identidades/capa: aplique a migração 202611050003 no Supabase)";
+        // banco sem a migração de quadras (0007)
+        id = await rpc("create", { ...base, p_profiles: profiles, p_cover: cover });
+        note = " (quadras: aplique a migração 202611060007 no Supabase)";
       }
       clearDraft();
       const u = new URL(location.href);
@@ -2227,6 +2309,23 @@ document.addEventListener("submit", async (ev) => {
       draftFor = "";
       custom = "Posições sorteadas";
     }
+    if (mode === "courts") {
+      const courts = clampCourts(data.get("courts")),
+        started = Boolean(edition.live) || count() > 0;
+      let live = null,
+        called = [];
+      if (started) {
+        const kept = Object.fromEntries(
+          Object.entries(liveNow()).filter(([c]) => Number(c) <= courts),
+        );
+        ({ live, called } = fillCourts(kept, games, courts));
+      }
+      await rpc("courts", { p_id: edition.id, p_version: edition.version, p_courts: courts, p_live: live });
+      for (const [c, x] of called) notifyGames(edition.id, "call", [x], "Quadra " + c).catch(() => {});
+      custom =
+        courts + (courts > 1 ? " quadras" : " quadra") +
+        (called.length ? " · " + called.map(([c, x]) => "Jogo " + num(x) + " chamado para a Quadra " + c).join(" · ") : "");
+    }
     if (mode === "settings") {
       const title = String(data.get("title") || "").trim();
       if (!title) throw Error("Dê um nome ao campeonato.");
@@ -2252,29 +2351,31 @@ document.addEventListener("submit", async (ev) => {
       if (data.get("s0") === "" || data.get("s1") === "")
         throw Error("Preencha os dois placares.");
       if (score[0] === score[1]) throw Error("Não pode haver empate.");
-      await rpc("score", {
-        p_id: f.dataset.edition || edition.id,
-        p_version: +f.dataset.version,
-        p_game: n,
-        p_a: score[0],
-        p_b: score[1],
-      });
-      // Jogos que passaram a ter as duas duplas definidas: avisa os celulares.
-      const ready = (gs) =>
-        new Set(
-          Object.values(gs)
-            .filter((g) => !g.score && g.teams.every(Boolean))
-            .map((g) => g.number),
-        );
-      const before = ready(games),
-        after = ready(
-          resolveEdition({ ...edition, results: { ...edition.results, [n]: score } }),
-        ),
-        fresh = [...after].filter((x) => !before.has(x));
-      if (fresh.length)
-        notifyGames(edition.id, "next", fresh)
-          .then((r) => r.sent && notify("Próximo jogo avisado em " + r.sent + " celular(es)"))
-          .catch(() => {});
+      const after = resolveEdition({ ...edition, results: { ...edition.results, [n]: score } }),
+        plan = afterResult(edition, games, after),
+        args = {
+          p_id: f.dataset.edition || edition.id,
+          p_version: +f.dataset.version,
+          p_game: n,
+          p_a: score[0],
+          p_b: score[1],
+        };
+      let saved = true;
+      try {
+        await rpc("score", { ...args, p_live: plan.live });
+      } catch (e) {
+        if (!/could not find the function/i.test(e.message)) throw e;
+        await rpc("score", args); // banco sem a migração de quadras (0007)
+        saved = false;
+      }
+      // Avisos: quem foi chamado para a quadra e quem entrou na fila.
+      for (const [c, x] of saved ? plan.called : [])
+        notifyGames(edition.id, "call", [x], "Quadra " + c).catch(() => {});
+      if (plan.queued.length) notifyGames(edition.id, "next", plan.queued).catch(() => {});
+      if (saved && plan.called.length)
+        custom =
+          "Placar salvo · " +
+          plan.called.map(([c, x]) => "Jogo " + num(x) + " chamado para a Quadra " + c).join(" · ");
     }
     if (mode === "call") {
       submit.textContent = "Enviando…";
@@ -2341,4 +2442,5 @@ refresh();
 setInterval(() => {
   if (!document.hidden) refresh();
 }, 15000);
+
 

@@ -3001,3 +3001,48 @@ footer .footbrand img {
     height: 40px;
   }
 }
+
+/* ==========================================================
+   Quadras: jogo em andamento ("ao vivo") e configuração
+   ========================================================== */
+.dot.live {
+  background: #e0402f;
+  box-shadow: 0 0 0 0 rgb(224 64 47 / 0.55);
+  animation: livePulse 1.6s ease-out infinite;
+}
+@keyframes livePulse {
+  70% {
+    box-shadow: 0 0 0 6px rgb(224 64 47 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(224 64 47 / 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.live {
+    animation: none;
+  }
+}
+.match.is-live {
+  border-color: #f0a99f;
+  box-shadow:
+    0 0 0 3px rgb(224 64 47 / 0.14),
+    var(--shadow-md);
+}
+.match.is-live .match-head .state {
+  color: #ffd9d3;
+  font-weight: 700;
+}
+.chip.live {
+  background: #fdece9;
+  color: #b3301f;
+  gap: 6px;
+}
+.courts-field {
+  display: grid;
+  gap: 6px;
+  max-width: 320px;
+}
+.courts-field small {
+  font-weight: 400;
+}
